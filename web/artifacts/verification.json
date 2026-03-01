@@ -1,0 +1,25 @@
+{
+  "defaultArabic": {
+    "lang": "ar",
+    "dir": "rtl",
+    "navArabicVisible": true
+  },
+  "englishToggle": {
+    "lang": "",
+    "dir": "",
+    "navEnglishVisible": false
+  },
+  "cartPersistence": {
+    "addToCartClicked": false,
+    "cartOpenClicked": true,
+    "note": "no #listings button found",
+    "cartTextBeforeReload": null,
+    "cartTextAfterReload": null,
+    "localStorageAfterReload": null,
+    "persisted": false
+  },
+  "screenshots": {
+    "desktop": "C:\\Users\\qimmaplastics\\Desktop\\Aljwharah\\aljwharah-assets\\web\\artifacts\\home-desktop.png",
+    "mobile": "C:\\Users\\qimmaplastics\\Desktop\\Aljwharah\\aljwharah-assets\\web\\artifacts\\home-mobile.png"
+  }
+}

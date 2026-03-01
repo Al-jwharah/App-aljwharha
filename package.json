@@ -1,0 +1,19 @@
+{
+    "name": "aljwharah-assets",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Aljwharah Assets — B2B Industrial Marketplace Platform",
+    "workspaces": [
+        "api",
+        "web"
+    ],
+    "scripts": {
+        "dev:api": "npm -w api run start:dev",
+        "dev:web": "npm -w web run dev",
+        "build:api": "npm -w api run build",
+        "build:web": "npm -w web run build",
+        "test:api": "npm -w api run test",
+        "start:api": "npm -w api run start:prod",
+        "start:web": "npm -w web run start"
+    }
+}
