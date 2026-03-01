@@ -1,8 +1,0 @@
-node_modules/
-dist/
-.next/
-coverage/
-.env
-.env.*
-.DS_Store
-!.env.example
