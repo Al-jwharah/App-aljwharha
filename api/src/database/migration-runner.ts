@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { DATABASE_POOL } from './database.module';
+import { DATABASE_POOL } from './database.tokens';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
@@ -30,6 +30,8 @@ export class MigrationRunner {
             return;
         }
 
+        const duplicateSchemaCodes = new Set(['42710', '42P07', '42701', '23505']);
+
         for (const file of files) {
             const { rows } = await this.pool.query(
                 'SELECT 1 FROM schema_migrations WHERE filename = $1',
@@ -39,8 +41,21 @@ export class MigrationRunner {
 
             this.logger.log(`Running migration: ${file}`);
             const sql = readFileSync(join(migrationsDir, file), 'utf-8');
-            await this.pool.query(sql);
-            await this.pool.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
+
+            try {
+                await this.pool.query(sql);
+            } catch (err: any) {
+                if (duplicateSchemaCodes.has(err?.code || '')) {
+                    this.logger.warn(`Skipping duplicate schema object while applying ${file}: ${err.message}`);
+                } else {
+                    throw err;
+                }
+            }
+
+            await this.pool.query(
+                'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING',
+                [file],
+            );
             this.logger.log(`✅ Applied: ${file}`);
         }
 

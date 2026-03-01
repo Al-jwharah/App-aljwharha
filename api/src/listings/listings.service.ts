@@ -77,9 +77,11 @@ export class ListingsService {
 
         const countQuery = `SELECT COUNT(*) FROM listings l ${where}`;
         const dataQuery = `
-      SELECT l.*, c.name_ar AS category_name_ar, c.name_en AS category_name_en, c.slug AS category_slug
+      SELECT l.*, c.name_ar AS category_name_ar, c.name_en AS category_name_en, c.slug AS category_slug,
+             u.is_verified AS seller_verified
       FROM listings l
       LEFT JOIN categories c ON l.category_id = c.id
+      LEFT JOIN users u ON u.id = l.owner_id
       ${where}
       ORDER BY l.created_at DESC
       LIMIT $${paramIdx++} OFFSET $${paramIdx++}
@@ -100,9 +102,10 @@ export class ListingsService {
 
     async findByOwner(ownerId: string) {
         const { rows } = await this.pool.query(
-            `SELECT l.*, c.name_ar AS category_name_ar
+            `SELECT l.*, c.name_ar AS category_name_ar, u.is_verified AS seller_verified
              FROM listings l
              LEFT JOIN categories c ON l.category_id = c.id
+             LEFT JOIN users u ON u.id = l.owner_id
              WHERE l.owner_id = $1
              ORDER BY l.created_at DESC`,
             [ownerId],
@@ -112,7 +115,11 @@ export class ListingsService {
 
     async findOne(id: string) {
         const { rows: listings } = await this.pool.query(
-            'SELECT l.*, c.name_ar AS category_name_ar, c.name_en AS category_name_en FROM listings l LEFT JOIN categories c ON l.category_id = c.id WHERE l.id = $1',
+            `SELECT l.*, c.name_ar AS category_name_ar, c.name_en AS category_name_en, u.is_verified AS seller_verified
+             FROM listings l
+             LEFT JOIN categories c ON l.category_id = c.id
+             LEFT JOIN users u ON u.id = l.owner_id
+             WHERE l.id = $1`,
             [id],
         );
 

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { IBM_Plex_Sans_Arabic, Inter } from 'next/font/google';
 import Link from 'next/link';
 import { AppProviders } from '../components/providers';
+import { ThemeToggle } from '../components/theme-toggle';
 import './globals.css';
 
 const arabicFont = IBM_Plex_Sans_Arabic({
@@ -80,10 +81,15 @@ function Header() {
                     <Link href="/listings" className="nav-link">الإعلانات</Link>
                     <Link href="/seller" className="nav-link">لوحة البائع</Link>
                     <Link href="/orders" className="nav-link">طلباتي</Link>
-                    <Link href="/ai" className="nav-link">الذكاء الاصطناعي</Link><Link href="/support" className="nav-link">الدعم</Link>
+                    <Link href="/ai" className="nav-link">الذكاء الاصطناعي</Link>
+                    <Link href="/support" className="nav-link">الدعم</Link>
                     <Link href="/admin" className="nav-link">الإدارة</Link>
                     <Link href="/owner" className="nav-link">المالك</Link>
                 </nav>
+                <div className="header-tools">
+                    <ThemeToggle />
+                    <Link href="/pricing" className="nav-link nav-link-pill">الباقات</Link>
+                </div>
             </div>
         </header>
     );
@@ -129,4 +135,3 @@ function Footer() {
         </footer>
     );
 }
-
