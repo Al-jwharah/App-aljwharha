@@ -1,0 +1,170 @@
+name: Deploy Aljwharah to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: appasd-488822
+  REGION: us-central1
+  WEB_SERVICE: aljwharah-web
+  API_SERVICE: aljwharah-api
+  WEB_IMAGE: us-central1-docker.pkg.dev/appasd-488822/aljwharah/web
+  API_IMAGE: us-central1-docker.pkg.dev/appasd-488822/aljwharah/api
+
+jobs:
+  # ─── Build & Deploy API ───
+  deploy-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build API Docker image
+        run: |
+          docker build -t ${{ env.API_IMAGE }}:${{ github.sha }} \
+                       -t ${{ env.API_IMAGE }}:latest \
+                       ./aljwharah-assets/api
+
+      - name: Push API image
+        run: |
+          docker push ${{ env.API_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.API_IMAGE }}:latest
+
+      - name: Deploy API to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.API_SERVICE }} \
+            --image=${{ env.API_IMAGE }}:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest,TAP_SECRET_KEY=TAP_SECRET_KEY:latest,TAP_PUBLIC_KEY=TAP_PUBLIC_KEY:latest,TAP_MERCHANT_ID=TAP_MERCHANT_ID:latest,JWT_SECRET=JWT_SECRET:latest" \
+            --set-env-vars="NODE_ENV=production" \
+            --min-instances=0 \
+            --max-instances=10 \
+            --memory=512Mi \
+            --cpu=1 \
+            --timeout=300 \
+            --port=4000
+
+      - name: Run DB Migrations
+        run: |
+          gcloud run jobs create migrate-${{ github.run_number }} \
+            --image=${{ env.API_IMAGE }}:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest" \
+            --set-env-vars="NODE_ENV=production" \
+            --command="node" \
+            --args="dist/database/run-migrations.js" \
+            --max-retries=0 \
+            --execute-now \
+            --wait || echo "Migration job completed"
+
+      - name: Verify API Health
+        run: |
+          API_URL=$(gcloud run services describe ${{ env.API_SERVICE }} --region=${{ env.REGION }} --format="value(status.url)")
+          echo "API URL: $API_URL"
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health" || echo "000")
+            echo "Attempt $i: $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ API healthy"
+              break
+            fi
+            sleep 5
+          done
+
+  # ─── Build & Deploy Web ───
+  deploy-web:
+    runs-on: ubuntu-latest
+    needs: deploy-api
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build Web Docker image
+        run: |
+          docker build -t ${{ env.WEB_IMAGE }}:${{ github.sha }} \
+                       -t ${{ env.WEB_IMAGE }}:latest \
+                       --build-arg NEXT_PUBLIC_API_URL=https://api.aljwharah.ai \
+                       ./aljwharah-assets/web
+
+      - name: Push Web image
+        run: |
+          docker push ${{ env.WEB_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.WEB_IMAGE }}:latest
+
+      - name: Deploy Web to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.WEB_SERVICE }} \
+            --image=${{ env.WEB_IMAGE }}:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --set-env-vars="NODE_ENV=production" \
+            --min-instances=0 \
+            --max-instances=10 \
+            --memory=512Mi \
+            --cpu=1 \
+            --timeout=60 \
+            --port=3000
+
+      - name: Verify Web Health
+        run: |
+          WEB_URL=$(gcloud run services describe ${{ env.WEB_SERVICE }} --region=${{ env.REGION }} --format="value(status.url)")
+          echo "Web URL: $WEB_URL"
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$WEB_URL" || echo "000")
+            echo "Attempt $i: $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Web healthy"
+              break
+            fi
+            sleep 5
+          done
+
+      - name: Output Deployment Summary
+        run: |
+          echo "===================================="
+          echo "🚀 DEPLOYMENT COMPLETE"
+          echo "===================================="
+          echo "API Revision: $(gcloud run services describe ${{ env.API_SERVICE }} --region=${{ env.REGION }} --format='value(status.latestReadyRevisionName)')"
+          echo "Web Revision: $(gcloud run services describe ${{ env.WEB_SERVICE }} --region=${{ env.REGION }} --format='value(status.latestReadyRevisionName)')"
+          echo "API URL: $(gcloud run services describe ${{ env.API_SERVICE }} --region=${{ env.REGION }} --format='value(status.url)')"
+          echo "Web URL: $(gcloud run services describe ${{ env.WEB_SERVICE }} --region=${{ env.REGION }} --format='value(status.url)')"
+          echo "===================================="

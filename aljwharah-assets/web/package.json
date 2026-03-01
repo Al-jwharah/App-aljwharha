@@ -1,0 +1,26 @@
+{
+    "name": "web",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "node .next/standalone/web/server.js",
+        "lint": "next lint"
+    },
+    "dependencies": {
+        "framer-motion": "^12.34.3",
+        "next": "^15.1.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "eslint": "^8.57.1",
+        "eslint-config-next": "^15.5.12",
+        "playwright": "^1.58.2",
+        "typescript": "^5.7.0"
+    }
+}
