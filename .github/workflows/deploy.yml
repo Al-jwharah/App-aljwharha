@@ -21,29 +21,23 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Auth GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: appasd-488822
-
       - name: Docker auth
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-
       - name: Build API
         run: docker build -t $API_IMAGE:$GITHUB_SHA -t $API_IMAGE:latest ./aljwharah-assets/api
-
       - name: Push API
         run: |
           docker push $API_IMAGE:$GITHUB_SHA
           docker push $API_IMAGE:latest
-
       - name: Deploy API
         run: |
           gcloud run deploy $API_SERVICE \
@@ -53,17 +47,11 @@ jobs:
             --allow-unauthenticated \
             --set-secrets="DATABASE_URL=DATABASE_URL:latest,TAP_SECRET_KEY=TAP_SECRET_KEY:latest,TAP_PUBLIC_KEY=TAP_PUBLIC_KEY:latest,TAP_MERCHANT_ID=TAP_MERCHANT_ID:latest,JWT_SECRET=JWT_SECRET:latest" \
             --set-env-vars="NODE_ENV=production" \
-            --min-instances=0 \
-            --max-instances=10 \
-            --memory=512Mi \
-            --cpu=1 \
-            --timeout=300 \
-            --port=4000
-
-      - name: Health check API
+            --min-instances=0 --max-instances=10 \
+            --memory=512Mi --cpu=1 --timeout=300 --port=4000
+      - name: Health check
         run: |
           API_URL=$(gcloud run services describe $API_SERVICE --region=$REGION --format="value(status.url)")
-          echo "API: $API_URL"
           sleep 10
           curl -sf "$API_URL/health" || echo "API warming up"
 
@@ -75,29 +63,23 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Auth GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: appasd-488822
-
       - name: Docker auth
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-
       - name: Build Web
         run: docker build -t $WEB_IMAGE:$GITHUB_SHA -t $WEB_IMAGE:latest --build-arg NEXT_PUBLIC_API_URL=https://api.aljwharah.ai ./aljwharah-assets/web
-
       - name: Push Web
         run: |
           docker push $WEB_IMAGE:$GITHUB_SHA
           docker push $WEB_IMAGE:latest
-
       - name: Deploy Web
         run: |
           gcloud run deploy $WEB_SERVICE \
@@ -106,14 +88,9 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --set-env-vars="NODE_ENV=production" \
-            --min-instances=0 \
-            --max-instances=10 \
-            --memory=512Mi \
-            --cpu=1 \
-            --timeout=60 \
-            --port=3000
-
+            --min-instances=0 --max-instances=10 \
+            --memory=512Mi --cpu=1 --timeout=60 --port=3000
       - name: Summary
         run: |
-          echo "API rev: $(gcloud run services describe $API_SERVICE --region=$REGION --format='value(status.latestReadyRevisionName)')"
-          echo "Web rev: $(gcloud run services describe $WEB_SERVICE --region=$REGION --format='value(status.latestReadyRevisionName)')"
+          echo "API: $(gcloud run services describe $API_SERVICE --region=$REGION --format=value[status.latestReadyRevisionName])"
+          echo "Web: $(gcloud run services describe $WEB_SERVICE --region=$REGION --format=value[status.latestReadyRevisionName])"
