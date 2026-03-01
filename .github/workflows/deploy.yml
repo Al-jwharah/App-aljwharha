@@ -92,5 +92,4 @@ jobs:
             --memory=512Mi --cpu=1 --timeout=60 --port=3000
       - name: Summary
         run: |
-          echo "API: $(gcloud run services describe $API_SERVICE --region=$REGION --format=value[status.latestReadyRevisionName])"
-          echo "Web: $(gcloud run services describe $WEB_SERVICE --region=$REGION --format=value[status.latestReadyRevisionName])"
+          echo "Done"
