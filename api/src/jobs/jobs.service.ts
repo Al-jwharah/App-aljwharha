@@ -1,35 +1,42 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { DATABASE_POOL } from '../database/database.module';
+import { AuditService } from '../audit/audit.service';
+import { SellerService } from '../seller/seller.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { AuctionsService } from '../auctions/auctions.service';
+import { AdsService } from '../ads/ads.service';
 
 @Injectable()
 export class JobsService {
     private readonly logger = new Logger(JobsService.name);
 
-    constructor(@Inject(DATABASE_POOL) private readonly pool: any) { }
+    constructor(
+        @Inject(DATABASE_POOL) private readonly pool: any,
+        private readonly auditService: AuditService,
+        private readonly sellerService: SellerService,
+        private readonly notificationsService: NotificationsService,
+        private readonly auctionsService: AuctionsService,
+        private readonly adsService: AdsService,
+    ) { }
 
-    /**
-     * Release expired reservations and mark orders EXPIRED.
-     * Idempotent: safe to call multiple times.
-     */
     async releaseExpiredReservations(now: Date = new Date()) {
         const client = await this.pool.connect();
         let released = 0;
+        const notifyUsers: Array<{ userId: string; orderId: string }> = [];
 
         try {
             await client.query('BEGIN');
 
-            // Find orders that are RESERVED with expired reservation
             const { rows: expiredOrders } = await client.query(
-                `SELECT o.id AS order_id
+                `SELECT o.id AS order_id, o.user_id
                  FROM orders o
-                 WHERE o.status IN ('RESERVED', 'PENDING')
+                 WHERE o.status IN ('RESERVED', 'PENDING', 'PENDING_PAYMENT')
                    AND o.created_at < $1 - INTERVAL '15 minutes'
                  FOR UPDATE SKIP LOCKED`,
                 [now],
             );
 
             for (const order of expiredOrders) {
-                // Check if any listing is still reserved by this order
                 const { rows: reservedListings } = await client.query(
                     `SELECT id FROM listings
                      WHERE reserved_by_order_id = $1
@@ -38,7 +45,6 @@ export class JobsService {
                     [order.order_id, now],
                 );
 
-                // Release reservation on listings
                 if (reservedListings.length > 0) {
                     await client.query(
                         `UPDATE listings
@@ -48,55 +54,71 @@ export class JobsService {
                     );
                 }
 
-                // Mark order as CANCELLED (expired)
                 await client.query(
-                    `UPDATE orders SET status = 'CANCELLED' WHERE id = $1 AND status IN ('RESERVED', 'PENDING')`,
+                    `UPDATE orders
+                     SET status = 'EXPIRED'
+                     WHERE id = $1 AND status IN ('RESERVED', 'PENDING', 'PENDING_PAYMENT')`,
                     [order.order_id],
                 );
 
-                // Update payment record if exists
                 await client.query(
-                    `UPDATE payments SET status = 'CANCELLED' WHERE order_id = $1 AND status = 'PENDING'`,
+                    `UPDATE payments
+                     SET status = 'FAILED'
+                     WHERE order_id = $1 AND status = 'PENDING'`,
                     [order.order_id],
+                );
+
+                await client.query(
+                    `INSERT INTO order_events (order_id, actor_user_id, actor_role, type, message, meta)
+                     VALUES ($1, NULL, 'SYSTEM', 'reservation.expired', $2, $3)`,
+                    [order.order_id, 'انتهت مهلة الحجز للطلب', JSON.stringify({ expiredAt: now.toISOString() })],
                 );
 
                 released++;
+                notifyUsers.push({ userId: order.user_id, orderId: order.order_id });
             }
 
             await client.query('COMMIT');
 
             if (released > 0) {
                 this.logger.log(`Released ${released} expired reservation(s)`);
+                await this.auditService.log({
+                    action: 'job.release_expired',
+                    entityType: 'system',
+                    entityId: 'release-expired',
+                    meta: { released, timestamp: now.toISOString() },
+                });
             }
 
-            return { released, timestamp: now.toISOString() };
+            for (const item of notifyUsers) {
+                await this.notificationsService.notifyReservationExpired(item.userId, item.orderId);
+            }
+
+            const result = { released, timestamp: now.toISOString() };
+            await this.recordJobRun('release-expired', 'SUCCESS', result);
+            return result;
         } catch (err) {
             await client.query('ROLLBACK');
             this.logger.error(`releaseExpiredReservations failed: ${(err as Error).message}`);
+            await this.recordJobRun('release-expired', 'FAILED', { error: (err as Error).message });
             throw err;
         } finally {
             client.release();
         }
     }
 
-    /**
-     * Reconcile pending payments by checking Tap API.
-     * Handles "webhook didn't arrive" cases.
-     * Idempotent: reuses existing idempotency layer.
-     */
     async reconcilePendingPayments(now: Date = new Date()) {
         const tapSecretKey = process.env.TAP_SECRET_KEY || '';
         if (!tapSecretKey) {
             this.logger.warn('TAP_SECRET_KEY not set — reconciliation skipped');
-            return { reconciled: 0, reason: 'no tap key' };
+            const result = { reconciled: 0, reason: 'no tap key' };
+            await this.recordJobRun('reconcile-payments', 'FAILED', result);
+            return result;
         }
 
-        // Find payments that are PENDING and older than 10 minutes
         const { rows: pendingPayments } = await this.pool.query(
-            `SELECT p.id, p.order_id, p.tap_charge_id, p.status, p.created_at,
-                    o.status AS order_status, o.id AS o_id
+            `SELECT p.id, p.order_id, p.tap_charge_id, p.status, p.created_at
              FROM payments p
-             JOIN orders o ON p.order_id = o.id
              WHERE p.status = 'PENDING'
                AND p.tap_charge_id IS NOT NULL
                AND p.created_at < $1 - INTERVAL '10 minutes'
@@ -110,7 +132,6 @@ export class JobsService {
 
         for (const payment of pendingPayments) {
             try {
-                // Fetch charge status from Tap
                 const res = await fetch(`https://api.tap.company/v2/charges/${payment.tap_charge_id}`, {
                     headers: { Authorization: `Bearer ${tapSecretKey}` },
                 });
@@ -127,20 +148,15 @@ export class JobsService {
                 if (tapStatus === 'CAPTURED') {
                     await this.applyPaymentSuccess(payment.order_id, payment.tap_charge_id);
                     reconciled++;
-                    this.logger.log(`Reconciled charge ${payment.tap_charge_id} → PAID`);
                 } else if (['FAILED', 'CANCELLED', 'DECLINED', 'TIMEDOUT', 'ABANDONED'].includes(tapStatus)) {
                     await this.applyPaymentFailure(payment.order_id, payment.tap_charge_id);
                     reconciled++;
-                    this.logger.log(`Reconciled charge ${payment.tap_charge_id} → FAILED (${tapStatus})`);
                 } else {
-                    // Still INITIATED/AUTHORIZED — check if past reservation window
                     const createdAt = new Date(payment.created_at);
                     const ageMinutes = (now.getTime() - createdAt.getTime()) / 60000;
                     if (ageMinutes > 30) {
-                        // Too old, mark as expired
                         await this.applyPaymentFailure(payment.order_id, payment.tap_charge_id);
                         reconciled++;
-                        this.logger.log(`Reconciled charge ${payment.tap_charge_id} → EXPIRED (${ageMinutes.toFixed(0)}min old)`);
                     }
                 }
             } catch (err) {
@@ -149,27 +165,87 @@ export class JobsService {
             }
         }
 
-        this.logger.log(`Reconciliation complete: ${reconciled} reconciled, ${errors} errors, ${pendingPayments.length} checked`);
-        return { reconciled, errors, checked: pendingPayments.length, timestamp: now.toISOString() };
+        await this.auditService.log({
+            action: 'job.reconcile_payments',
+            entityType: 'system',
+            entityId: 'reconcile-payments',
+            meta: { reconciled, errors, checked: pendingPayments.length },
+        });
+
+        const result = { reconciled, errors, checked: pendingPayments.length, timestamp: now.toISOString() };
+        await this.recordJobRun('reconcile-payments', 'SUCCESS', result);
+        return result;
     }
 
-    /**
-     * Apply CAPTURED transition (idempotent — checks current state before mutating)
-     */
+    async settleSellerBalances(settlementDays = Number(process.env.SETTLEMENT_DAYS || 7)) {
+        const result = await this.sellerService.settlePendingBalances(settlementDays);
+        await this.auditService.log({
+            action: 'job.settle_balances',
+            entityType: 'system',
+            entityId: 'settle-balances',
+            meta: { settlementDays, ...result },
+        });
+        await this.recordJobRun('settle-balances', 'SUCCESS', { settlementDays, ...result });
+        return result;
+    }
+
+    async processNotifications(limit = 50) {
+        const result = await this.notificationsService.processOutboxBatch(limit);
+        await this.auditService.log({
+            action: 'job.process_notifications',
+            entityType: 'system',
+            entityId: 'process-notifications',
+            meta: result,
+        });
+        await this.recordJobRun('process-notifications', 'SUCCESS', result);
+        return result;
+    }
+
+    async closeEndedAuctions(limit = 50) {
+        const result = await this.auctionsService.closeEndedAuctions(limit);
+        await this.auditService.log({
+            action: 'job.close_auctions',
+            entityType: 'system',
+            entityId: 'close-auctions',
+            meta: result,
+        });
+        await this.recordJobRun('close-auctions', 'SUCCESS', result);
+        return result;
+    }
+
+    async expireAdCampaigns(limit = 200) {
+        const result = await this.adsService.expireCampaigns(limit);
+        await this.auditService.log({
+            action: 'job.expire_ads',
+            entityType: 'system',
+            entityId: 'expire-ads',
+            meta: result,
+        });
+        await this.recordJobRun('expire-ads', 'SUCCESS', result);
+        return result;
+    }
+
     private async applyPaymentSuccess(orderId: string, chargeId: string) {
         const client = await this.pool.connect();
+        let userId: string | null = null;
+        let totalAmount = 0;
+        let currency = 'SAR';
+
         try {
             await client.query('BEGIN');
 
-            // Lock order
             const { rows } = await client.query(
-                'SELECT status FROM orders WHERE id = $1 FOR UPDATE',
+                'SELECT status, user_id, total_amount, total, currency FROM orders WHERE id = $1 FOR UPDATE',
                 [orderId],
             );
             if (rows.length === 0 || rows[0].status === 'PAID') {
                 await client.query('COMMIT');
-                return; // Already paid — idempotent
+                return;
             }
+
+            userId = rows[0].user_id;
+            totalAmount = Number(rows[0].total_amount ?? rows[0].total ?? 0);
+            currency = rows[0].currency || 'SAR';
 
             await client.query(
                 `UPDATE orders SET status = 'PAID', paid_at = NOW(), provider_charge_id = $1 WHERE id = $2`,
@@ -179,6 +255,12 @@ export class JobsService {
             await client.query(
                 `UPDATE payments SET status = 'PAID' WHERE tap_charge_id = $1 AND status != 'PAID'`,
                 [chargeId],
+            );
+
+            await client.query(
+                `INSERT INTO order_events (order_id, actor_user_id, actor_role, type, message, meta)
+                 VALUES ($1, NULL, 'SYSTEM', 'payment.captured', $2, $3)`,
+                [orderId, 'تمت تسوية الدفع آليًا عبر وظيفة reconciliation', JSON.stringify({ chargeId })],
             );
 
             const { rows: items } = await client.query(
@@ -193,6 +275,7 @@ export class JobsService {
                 );
             }
 
+            await this.sellerService.creditOrderToPending(orderId, client);
             await client.query('COMMIT');
         } catch (err) {
             await client.query('ROLLBACK');
@@ -200,24 +283,29 @@ export class JobsService {
         } finally {
             client.release();
         }
+
+        if (userId) {
+            await this.notificationsService.notifyPaymentCaptured(userId, orderId, totalAmount, currency);
+        }
     }
 
-    /**
-     * Apply FAILED transition (idempotent — checks current state before mutating)
-     */
     private async applyPaymentFailure(orderId: string, chargeId: string) {
         const client = await this.pool.connect();
+        let userId: string | null = null;
+
         try {
             await client.query('BEGIN');
 
             const { rows } = await client.query(
-                'SELECT status FROM orders WHERE id = $1 FOR UPDATE',
+                'SELECT status, user_id FROM orders WHERE id = $1 FOR UPDATE',
                 [orderId],
             );
-            if (rows.length === 0 || rows[0].status === 'PAID' || rows[0].status === 'CANCELLED') {
+            if (rows.length === 0 || rows[0].status === 'PAID' || rows[0].status === 'CANCELLED' || rows[0].status === 'EXPIRED') {
                 await client.query('COMMIT');
-                return; // Already terminal — idempotent
+                return;
             }
+
+            userId = rows[0].user_id;
 
             await client.query(
                 `UPDATE orders SET status = 'CANCELLED', provider_charge_id = $1 WHERE id = $2`,
@@ -227,6 +315,12 @@ export class JobsService {
             await client.query(
                 `UPDATE payments SET status = 'FAILED' WHERE tap_charge_id = $1 AND status NOT IN ('PAID', 'FAILED')`,
                 [chargeId],
+            );
+
+            await client.query(
+                `INSERT INTO order_events (order_id, actor_user_id, actor_role, type, message, meta)
+                 VALUES ($1, NULL, 'SYSTEM', 'payment.failed', $2, $3)`,
+                [orderId, 'فشلت تسوية الدفع وتم إلغاء الطلب', JSON.stringify({ chargeId })],
             );
 
             const { rows: items } = await client.query(
@@ -247,6 +341,22 @@ export class JobsService {
             throw err;
         } finally {
             client.release();
+        }
+
+        if (userId) {
+            await this.notificationsService.notifyPaymentFailed(userId, orderId);
+        }
+    }
+
+    private async recordJobRun(jobName: string, status: 'SUCCESS' | 'FAILED', details: Record<string, unknown>) {
+        try {
+            await this.pool.query(
+                `INSERT INTO job_runs (job_name, status, details)
+                 VALUES ($1, $2, $3)`,
+                [jobName, status, JSON.stringify(details || {})],
+            );
+        } catch (err) {
+            this.logger.warn(`Failed to record job run ${jobName}: ${(err as Error).message}`);
         }
     }
 }

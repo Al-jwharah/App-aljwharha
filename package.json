@@ -14,6 +14,7 @@
         "build:web": "npm -w web run build",
         "test:api": "npm -w api run test",
         "start:api": "npm -w api run start:prod",
-        "start:web": "npm -w web run start"
+        "start:web": "npm -w web run start",
+        "build": "npm run build:api && npm run build:web"
     }
 }

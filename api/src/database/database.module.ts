@@ -1,6 +1,7 @@
 import { Module, Global, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
+import { MigrationRunner } from './migration-runner';
 
 export const DATABASE_POOL = 'DATABASE_POOL';
 
@@ -36,7 +37,8 @@ const logger = new Logger('DatabaseModule');
                 return pool;
             },
         },
+        MigrationRunner,
     ],
-    exports: [DATABASE_POOL],
+    exports: [DATABASE_POOL, MigrationRunner],
 })
 export class DatabaseModule { }

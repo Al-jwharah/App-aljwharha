@@ -1,12 +1,20 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { DATABASE_POOL } from '../database/database.module';
 import { CreateListingDto } from './dto/create-listing.dto';
+import { PlansService } from '../plans/plans.service';
 
 @Injectable()
 export class ListingsService {
-    constructor(@Inject(DATABASE_POOL) private readonly pool: any) { }
+    constructor(
+        @Inject(DATABASE_POOL) private readonly pool: any,
+        private readonly plansService: PlansService,
+    ) { }
 
     async create(dto: CreateListingDto) {
+        if (dto.ownerId) {
+            await this.plansService.assertListingAllowed(dto.ownerId);
+        }
+
         const { rows } = await this.pool.query(
             `INSERT INTO listings (title, description, type, price, currency, city, category_id, owner_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -28,6 +36,7 @@ export class ListingsService {
     async findAll(filters: {
         type?: string;
         status?: string;
+        q?: string;
         categoryId?: number;
         page?: number;
         limit?: number;
@@ -48,8 +57,16 @@ export class ListingsService {
             conditions.push(`l.category_id = $${paramIdx++}`);
             params.push(filters.categoryId);
         }
+        if (filters.q?.trim()) {
+            conditions.push(`(
+                l.title ILIKE $${paramIdx}
+                OR COALESCE(l.description, '') ILIKE $${paramIdx}
+                OR COALESCE(l.city, '') ILIKE $${paramIdx}
+            )`);
+            params.push(`%${filters.q.trim()}%`);
+            paramIdx++;
+        }
 
-        // Exclude sold listings from public view
         conditions.push(`(l.is_sold = false OR l.is_sold IS NULL)`);
 
         const page = filters.page ?? 1;

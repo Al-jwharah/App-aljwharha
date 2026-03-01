@@ -1,79 +1,183 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { apiFetch, parseApiError } from '../../lib/api';
+import { getAccessToken } from '../../lib/auth';
+import { UIButton, UICard, UIEmptyState, UIInput, UISelect, UITextarea, UITable, useToast } from '../../components/ui-kit';
 
-const faqs = [
-    {
-        q: 'ما هي منصة Aljwharah.ai؟',
-        a: 'منصة الجوهرة هي سوق إلكتروني متخصص في تداول الأصول الصناعية مثل العلامات التجارية والمصانع والمحلات والمعدات والمواد الخام.',
-    },
-    {
-        q: 'كيف أبدأ البيع على المنصة؟',
-        a: 'قم بإنشاء حساب، ثم أضف إعلانك مع وصف دقيق وصور واضحة. بعد مراجعة فريقنا، سيُنشر إعلانك للمشترين المهتمين.',
-    },
-    {
-        q: 'ما هي طرق الدفع المتاحة؟',
-        a: 'ندعم Visa وMastercard ومدى وApple Pay وSamsung Pay عبر بوابة Tap الآمنة.',
-    },
-    {
-        q: 'هل المزايدة ملزمة؟',
-        a: 'نعم، المزايدة ملزمة قانونياً. عند فوزك بالمزاد، يتوجب عليك إتمام عملية الشراء.',
-    },
-    {
-        q: 'كيف أطلب استرداد؟',
-        a: 'يمكنك تقديم طلب استرداد عبر صفحة تواصل معنا مع ذكر رقم الصفقة. راجع سياسة الاسترجاع للتفاصيل الكاملة.',
-    },
-    {
-        q: 'هل بياناتي آمنة؟',
-        a: 'نستخدم تشفير SSL/TLS وخوادم Google Cloud المؤمنة. لا نخزن بيانات البطاقات البنكية على خوادمنا.',
-    },
-    {
-        q: 'ما هي عمولة المنصة؟',
-        a: 'تختلف العمولة حسب نوع الصفقة ويتم الإفصاح عنها بوضوح قبل إتمام أي عملية.',
-    },
-    {
-        q: 'كيف أتواصل مع الدعم؟',
-        a: 'يمكنك التواصل معنا عبر صفحة تواصل معنا أو عبر البريد الإلكتروني support@aljwharah.ai.',
-    },
-];
+type Ticket = {
+    id: string;
+    subject: string;
+    category: string;
+    priority: string;
+    status: string;
+    last_reply_at?: string;
+    created_at: string;
+    messages_count?: number;
+};
 
 export default function SupportPage() {
-    const [openIndex, setOpenIndex] = useState<number | null>(null);
+    const { push } = useToast();
+    const [tickets, setTickets] = useState<Ticket[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [subject, setSubject] = useState('');
+    const [category, setCategory] = useState('PAYMENT');
+    const [priority, setPriority] = useState('MEDIUM');
+    const [message, setMessage] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    const load = async () => {
+        const token = getAccessToken();
+        if (!token) {
+            setLoading(false);
+            return;
+        }
+        try {
+            const res = await apiFetch<{ items: Ticket[] }>('/support/tickets', {}, token);
+            setTickets(res.items || []);
+        } catch (err) {
+            push(parseApiError(err));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        load();
+    }, []);
+
+    const token = typeof window !== 'undefined' ? getAccessToken() : null;
 
     return (
-        <main className="legal-page">
-            <div className="legal-container">
-                <h1>الدعم والأسئلة الشائعة</h1>
-                <p style={{ color: 'var(--color-text-muted)', marginBottom: '32px' }}>
-                    إجابات سريعة لأكثر الأسئلة شيوعاً حول استخدام المنصة.
-                </p>
+        <main className="page-shell">
+            <section className="page-section">
+                <h1 className="page-title">مركز الدعم والتذاكر</h1>
+                <p className="page-subtitle">دعم تشغيلي فعلي 24/7 مع SLA حسب باقتك.</p>
+            </section>
 
-                <div className="faq-list">
-                    {faqs.map((faq, i) => (
-                        <div key={i} className={`faq-item ${openIndex === i ? 'faq-open' : ''}`}>
-                            <button
-                                className="faq-question"
-                                onClick={() => setOpenIndex(openIndex === i ? null : i)}
-                                aria-expanded={openIndex === i}
-                            >
-                                <span>{faq.q}</span>
-                                <span className="faq-icon">{openIndex === i ? '−' : '+'}</span>
-                            </button>
-                            {openIndex === i && (
-                                <div className="faq-answer">
-                                    <p>{faq.a}</p>
+            {!token ? (
+                <UIEmptyState title="تسجيل الدخول مطلوب" description="يرجى تسجيل الدخول لفتح تذكرة دعم ومتابعتها." />
+            ) : (
+                <>
+                    <UICard className="page-section">
+                        <h2 style={{ marginBottom: 10 }}>فتح تذكرة جديدة</h2>
+                        <div style={{ display: 'grid', gap: 10 }}>
+                            <div className="page-grid-3">
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6 }}>الموضوع</label>
+                                    <UIInput value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="مثال: تعذر إتمام الدفع" />
                                 </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6 }}>التصنيف</label>
+                                    <UISelect value={category} onChange={(e) => setCategory(e.target.value)}>
+                                        <option value="PAYMENT">الدفع</option>
+                                        <option value="ORDERS">الطلبات</option>
+                                        <option value="LISTINGS">الإعلانات</option>
+                                        <option value="LEGAL">قانوني</option>
+                                        <option value="OTHER">أخرى</option>
+                                    </UISelect>
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: 6 }}>الأولوية</label>
+                                    <UISelect value={priority} onChange={(e) => setPriority(e.target.value)}>
+                                        <option value="LOW">منخفضة</option>
+                                        <option value="MEDIUM">متوسطة</option>
+                                        <option value="HIGH">عالية</option>
+                                        <option value="CRITICAL">حرجة</option>
+                                    </UISelect>
+                                </div>
+                            </div>
+                            <div>
+                                <label style={{ display: 'block', marginBottom: 6 }}>الوصف</label>
+                                <UITextarea rows={4} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="اكتب تفاصيل المشكلة بدقة" />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                <UIButton
+                                    type="button"
+                                    disabled={saving}
+                                    onClick={async () => {
+                                        if (!subject.trim()) {
+                                            push('الموضوع مطلوب');
+                                            return;
+                                        }
+                                        if (!message.trim()) {
+                                            push('وصف المشكلة مطلوب');
+                                            return;
+                                        }
+                                        const localToken = getAccessToken();
+                                        if (!localToken) {
+                                            push('انتهت الجلسة، أعد تسجيل الدخول');
+                                            return;
+                                        }
 
-                <div className="support-cta">
-                    <h2>لم تجد إجابتك؟</h2>
-                    <p>تواصل مع فريق الدعم مباشرة وسنساعدك في أقرب وقت.</p>
-                    <a href="/contact" className="btn-submit">تواصل معنا</a>
-                </div>
-            </div>
+                                        setSaving(true);
+                                        try {
+                                            await apiFetch('/support/tickets', {
+                                                method: 'POST',
+                                                body: JSON.stringify({
+                                                    subject: subject.trim(),
+                                                    category,
+                                                    priority,
+                                                    message: message.trim(),
+                                                }),
+                                            }, localToken);
+                                            setSubject('');
+                                            setMessage('');
+                                            push('تم فتح التذكرة بنجاح');
+                                            await load();
+                                        } catch (err) {
+                                            push(parseApiError(err));
+                                        } finally {
+                                            setSaving(false);
+                                        }
+                                    }}
+                                >
+                                    {saving ? 'جارٍ الإنشاء...' : 'فتح التذكرة'}
+                                </UIButton>
+                            </div>
+                        </div>
+                    </UICard>
+
+                    <UICard>
+                        <h2 style={{ marginBottom: 10 }}>تذاكري</h2>
+                        {loading ? (
+                            <p>جارٍ التحميل...</p>
+                        ) : tickets.length === 0 ? (
+                            <UIEmptyState title="لا توجد تذاكر" description="لم يتم فتح أي تذكرة بعد." />
+                        ) : (
+                            <UITable>
+                                <thead>
+                                    <tr>
+                                        <th>الرقم</th>
+                                        <th>الموضوع</th>
+                                        <th>الحالة</th>
+                                        <th>الأولوية</th>
+                                        <th>آخر تحديث</th>
+                                        <th>إجراء</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {tickets.map((ticket) => (
+                                        <tr key={ticket.id}>
+                                            <td>{ticket.id.slice(0, 8)}...</td>
+                                            <td>{ticket.subject}</td>
+                                            <td>{ticket.status}</td>
+                                            <td>{ticket.priority}</td>
+                                            <td>{new Date(ticket.last_reply_at || ticket.created_at).toLocaleString('ar-SA')}</td>
+                                            <td>
+                                                <Link href={`/support/tickets/${ticket.id}`}>
+                                                    <UIButton type="button" variant="secondary">فتح</UIButton>
+                                                </Link>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </UITable>
+                        )}
+                    </UICard>
+                </>
+            )}
         </main>
     );
 }

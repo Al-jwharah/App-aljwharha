@@ -5,17 +5,17 @@
     "navArabicVisible": true
   },
   "englishToggle": {
-    "lang": "",
-    "dir": "",
+    "lang": "en",
+    "dir": "ltr",
     "navEnglishVisible": false
   },
   "cartPersistence": {
     "addToCartClicked": false,
     "cartOpenClicked": true,
     "note": "no #listings button found",
-    "cartTextBeforeReload": null,
-    "cartTextAfterReload": null,
-    "localStorageAfterReload": null,
+    "cartTextBeforeReload": "السلةإغلاقالسلة فارغة.",
+    "cartTextAfterReload": "السلةإغلاقالسلة فارغة.",
+    "localStorageAfterReload": "[]",
     "persisted": false
   },
   "screenshots": {

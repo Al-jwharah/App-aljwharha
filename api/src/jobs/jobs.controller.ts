@@ -32,6 +32,42 @@ export class JobsController {
         return result;
     }
 
+    @Post('settle-balances')
+    @HttpCode(HttpStatus.OK)
+    async settleBalances(@Req() req: Request) {
+        this.verifySecret(req);
+        const result = await this.jobsService.settleSellerBalances();
+        this.logger.log(`[${req['requestId'] || 'no-id'}] settle-balances: ${JSON.stringify(result)}`);
+        return result;
+    }
+
+    @Post('process-notifications')
+    @HttpCode(HttpStatus.OK)
+    async processNotifications(@Req() req: Request) {
+        this.verifySecret(req);
+        const result = await this.jobsService.processNotifications();
+        this.logger.log(`[${req['requestId'] || 'no-id'}] process-notifications: ${JSON.stringify(result)}`);
+        return result;
+    }
+
+    @Post('close-auctions')
+    @HttpCode(HttpStatus.OK)
+    async closeAuctions(@Req() req: Request) {
+        this.verifySecret(req);
+        const result = await this.jobsService.closeEndedAuctions();
+        this.logger.log(`[${req['requestId'] || 'no-id'}] close-auctions: ${JSON.stringify(result)}`);
+        return result;
+    }
+
+    @Post('expire-ads')
+    @HttpCode(HttpStatus.OK)
+    async expireAds(@Req() req: Request) {
+        this.verifySecret(req);
+        const result = await this.jobsService.expireAdCampaigns();
+        this.logger.log(`[${req['requestId'] || 'no-id'}] expire-ads: ${JSON.stringify(result)}`);
+        return result;
+    }
+
     private verifySecret(req: Request) {
         const expected = this.configService.get<string>('INTERNAL_JOB_SECRET');
         if (!expected) {

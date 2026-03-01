@@ -1,6 +1,11 @@
 import { Injectable, Inject, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DATABASE_POOL } from '../database/database.module';
+import { AuditService } from '../audit/audit.service';
+import { SellerService } from '../seller/seller.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { AdsService } from '../ads/ads.service';
+import { PlansService } from '../plans/plans.service';
 
 @Injectable()
 export class PaymentsService {
@@ -12,6 +17,11 @@ export class PaymentsService {
     constructor(
         private readonly config: ConfigService,
         @Inject(DATABASE_POOL) private readonly pool: any,
+        private readonly auditService: AuditService,
+        private readonly sellerService: SellerService,
+        private readonly notificationsService: NotificationsService,
+        private readonly adsService: AdsService,
+        private readonly plansService: PlansService,
     ) {
         this.secretKey = this.config.get<string>('TAP_SECRET_KEY') || '';
         this.merchantId = this.config.get<string>('TAP_MERCHANT_ID') || '';
@@ -21,15 +31,11 @@ export class PaymentsService {
         }
     }
 
-    /**
-     * Create a payment charge linked to an order (idempotent)
-     */
     async createPayment(orderId: string, userId: string) {
         if (!this.secretKey) {
             throw new BadRequestException('بوابة الدفع غير مُعدّة');
         }
 
-        // Fetch order + verify ownership
         const { rows: orders } = await this.pool.query(
             'SELECT * FROM orders WHERE id = $1 AND user_id = $2',
             [orderId, userId],
@@ -38,13 +44,12 @@ export class PaymentsService {
 
         const order = orders[0];
         if (order.status === 'PAID') throw new ConflictException('الطلب مدفوع مسبقاً');
-        if (order.status !== 'RESERVED' && order.status !== 'PENDING') {
+        if (!['RESERVED', 'PENDING_PAYMENT', 'PENDING'].includes(order.status)) {
             throw new BadRequestException('لا يمكن دفع هذا الطلب');
         }
 
-        // ── Idempotency: check for existing active payment ──
         const { rows: existingPayments } = await this.pool.query(
-            `SELECT * FROM payments WHERE order_id = $1 AND status NOT IN ('FAILED', 'CANCELLED') LIMIT 1`,
+            `SELECT * FROM payments WHERE order_id = $1 AND status <> 'FAILED' LIMIT 1`,
             [orderId],
         );
         if (existingPayments.length > 0) {
@@ -52,25 +57,24 @@ export class PaymentsService {
             if (existing.status === 'PAID') {
                 throw new ConflictException('الطلب مدفوع مسبقاً');
             }
-            // Return the existing pending charge info
-            this.logger.log(`Returning existing payment ${existing.tap_charge_id} for order ${orderId}`);
             return {
                 chargeId: existing.tap_charge_id,
                 status: existing.status,
                 amount: Number(existing.amount),
                 currency: existing.currency,
-                transactionUrl: null, // Cannot retrieve URL for existing charge; client should redirect via order page
+                transactionUrl: null,
                 orderId,
                 idempotent: true,
             };
         }
 
-        // Fetch user email
         const { rows: users } = await this.pool.query('SELECT email, name FROM users WHERE id = $1', [userId]);
         const user = users[0] || {};
 
+        const amount = Number(order.total_amount ?? order.total);
+
         const body = {
-            amount: Number(order.total),
+            amount,
             currency: order.currency || 'SAR',
             customer_initiated: true,
             threeDSecure: true,
@@ -93,8 +97,6 @@ export class PaymentsService {
             },
         };
 
-        this.logger.log(`Creating charge for order ${orderId}: ${order.total} ${order.currency}`);
-
         const res = await fetch(`${this.tapUrl}/charges`, {
             method: 'POST',
             headers: {
@@ -110,21 +112,35 @@ export class PaymentsService {
             throw new BadRequestException(data.errors?.[0]?.description || 'فشل إنشاء عملية الدفع');
         }
 
-        // Store payment record for idempotency tracking
         await this.pool.query(
             `INSERT INTO payments (order_id, tap_charge_id, status, amount, currency)
              VALUES ($1, $2, 'PENDING', $3, $4)
              ON CONFLICT (tap_charge_id) DO NOTHING`,
-            [orderId, data.id, Number(order.total), order.currency || 'SAR'],
+            [orderId, data.id, amount, order.currency || 'SAR'],
         );
 
-        // Store charge ID on order
         await this.pool.query(
-            'UPDATE orders SET provider_charge_id = $1, provider_reference = $2 WHERE id = $3',
+            `UPDATE orders
+             SET provider_charge_id = $1,
+                 provider_reference = $2,
+                 status = CASE WHEN status = 'RESERVED' THEN 'PENDING_PAYMENT' ELSE status END
+             WHERE id = $3`,
             [data.id, data.reference?.transaction || '', orderId],
         );
 
-        this.logger.log(`Charge ${data.id} created for order ${orderId}`);
+        await this.pool.query(
+            `INSERT INTO order_events (order_id, actor_user_id, actor_role, type, message, meta)
+             VALUES ($1, $2, 'BUYER', 'payment.create', $3, $4)`,
+            [orderId, userId, 'تم إنشاء رابط الدفع', JSON.stringify({ chargeId: data.id, amount })],
+        );
+
+        await this.auditService.log({
+            actorUserId: userId,
+            action: 'payment.create',
+            entityType: 'order',
+            entityId: orderId,
+            meta: { chargeId: data.id, amount, currency: order.currency },
+        });
 
         return {
             chargeId: data.id,
@@ -136,9 +152,6 @@ export class PaymentsService {
         };
     }
 
-    /**
-     * Get charge status
-     */
     async getCharge(chargeId: string) {
         const res = await fetch(`${this.tapUrl}/charges/${chargeId}`, {
             headers: { Authorization: `Bearer ${this.secretKey}` },
@@ -153,11 +166,14 @@ export class PaymentsService {
         };
     }
 
-    /**
-     * Handle Tap webhook — idempotent order status mapping
-     */
     async handleWebhook(payload: any) {
         this.logger.log(`Webhook received: ${payload.id} — ${payload.status}`);
+
+        const adResult = await this.adsService.handleTapWebhook(payload);
+        if (adResult) return { received: true, target: 'ads', ...adResult };
+
+        const subscriptionResult = await this.plansService.handleTapWebhook(payload);
+        if (subscriptionResult) return { received: true, target: 'subscriptions', ...subscriptionResult };
 
         const chargeId = payload.id;
         const status = payload.status;
@@ -169,10 +185,12 @@ export class PaymentsService {
         }
 
         const client = await this.pool.connect();
+        let notifyCaptured: { userId: string; amount: number; currency: string } | null = null;
+        let notifyFailedUserId: string | null = null;
+
         try {
             await client.query('BEGIN');
 
-            // ── Idempotency: lock payment row ──
             const { rows: paymentRows } = await client.query(
                 'SELECT * FROM payments WHERE tap_charge_id = $1 FOR UPDATE',
                 [chargeId],
@@ -181,70 +199,92 @@ export class PaymentsService {
             if (paymentRows.length > 0) {
                 const payment = paymentRows[0];
                 if (payment.status === 'PAID' || payment.status === 'FAILED') {
-                    // Already processed — return idempotent 200
                     await client.query('COMMIT');
-                    this.logger.log(`Webhook for charge ${chargeId} already processed (${payment.status}) — skipping`);
                     return { received: true, action: 'already processed', chargeId, orderId };
                 }
             }
 
-            // Lock order row
             const { rows } = await client.query(
                 'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
                 [orderId],
             );
             if (rows.length === 0) {
-                this.logger.warn(`Order ${orderId} not found for webhook`);
                 await client.query('COMMIT');
                 return { received: true, action: 'order not found' };
             }
 
             const order = rows[0];
 
-            // Idempotency: if order already in terminal state, skip
-            if (order.status === 'PAID' || order.status === 'CANCELLED' || order.status === 'REFUNDED') {
+            if (order.status === 'PAID' || order.status === 'REFUNDED') {
                 await client.query('COMMIT');
-                this.logger.log(`Order ${orderId} already in terminal state (${order.status}) — skipping`);
                 return { received: true, action: 'already terminal', chargeId, orderId };
             }
 
             if (status === 'CAPTURED') {
-                // Payment successful
                 await client.query(
-                    `UPDATE orders SET status = 'PAID', paid_at = NOW(), provider_charge_id = $1 WHERE id = $2`,
+                    `UPDATE orders
+                     SET status = 'PAID', paid_at = NOW(), provider_charge_id = $1
+                     WHERE id = $2`,
                     [chargeId, orderId],
                 );
 
-                // Update payment record
                 await client.query(
                     `UPDATE payments SET status = 'PAID' WHERE tap_charge_id = $1`,
                     [chargeId],
                 );
 
-                // Mark listings as sold + clear reservation
+                await client.query(
+                    `INSERT INTO order_events (order_id, actor_user_id, actor_role, type, message, meta)
+                     VALUES ($1, NULL, 'SYSTEM', 'payment.captured', $2, $3)`,
+                    [orderId, 'تم تأكيد عملية الدفع بنجاح', JSON.stringify({ chargeId })],
+                );
+
                 const { rows: items } = await client.query(
                     'SELECT listing_id FROM order_items WHERE order_id = $1',
                     [orderId],
                 );
                 for (const item of items) {
                     await client.query(
-                        `UPDATE listings SET is_sold = true, reserved_until = NULL, reserved_by_order_id = NULL
+                        `UPDATE listings
+                         SET is_sold = true, reserved_until = NULL, reserved_by_order_id = NULL
                          WHERE id = $1 AND (is_sold = false OR is_sold IS NULL)`,
                         [item.listing_id],
                     );
                 }
 
-                this.logger.log(`Order ${orderId} PAID — ${items.length} listings marked as sold`);
-            } else if (status === 'FAILED' || status === 'CANCELLED' || status === 'DECLINED' || status === 'TIMEDOUT') {
-                // Payment failed — release reservations
+                await this.sellerService.creditOrderToPending(orderId, client);
+
+                await this.auditService.log({
+                    action: 'payment.captured',
+                    entityType: 'order',
+                    entityId: orderId,
+                    meta: { chargeId, listingsCount: items.length },
+                });
+
+                notifyCaptured = {
+                    userId: order.user_id,
+                    amount: Number(order.total_amount ?? order.total),
+                    currency: order.currency || 'SAR',
+                };
+            } else if (['FAILED', 'CANCELLED', 'DECLINED', 'TIMEDOUT', 'ABANDONED'].includes(status)) {
                 await client.query(
-                    `UPDATE orders SET status = 'CANCELLED', provider_charge_id = $1 WHERE id = $2`,
+                    `UPDATE orders
+                     SET status = 'CANCELLED', provider_charge_id = $1
+                     WHERE id = $2 AND status <> 'PAID'`,
                     [chargeId, orderId],
                 );
 
                 await client.query(
-                    `UPDATE payments SET status = 'FAILED' WHERE tap_charge_id = $1`,
+                    `UPDATE payments
+                     SET status = 'FAILED'
+                     WHERE tap_charge_id = $1 AND status <> 'PAID'`,
                     [chargeId],
+                );
+
+                await client.query(
+                    `INSERT INTO order_events (order_id, actor_user_id, actor_role, type, message, meta)
+                     VALUES ($1, NULL, 'SYSTEM', 'payment.failed', $2, $3)`,
+                    [orderId, 'فشلت عملية الدفع', JSON.stringify({ chargeId, tapStatus: status })],
                 );
 
                 const { rows: items } = await client.query(
@@ -253,17 +293,39 @@ export class PaymentsService {
                 );
                 for (const item of items) {
                     await client.query(
-                        'UPDATE listings SET reserved_until = NULL, reserved_by_order_id = NULL WHERE id = $1 AND reserved_by_order_id = $2',
+                        `UPDATE listings
+                         SET reserved_until = NULL, reserved_by_order_id = NULL
+                         WHERE id = $1 AND reserved_by_order_id = $2`,
                         [item.listing_id, orderId],
                     );
                 }
 
-                this.logger.log(`Order ${orderId} CANCELLED — reservations released`);
+                await this.auditService.log({
+                    action: 'payment.failed',
+                    entityType: 'order',
+                    entityId: orderId,
+                    meta: { chargeId, tapStatus: status },
+                });
+
+                notifyFailedUserId = order.user_id;
             } else {
                 this.logger.log(`Order ${orderId} — unhandled status: ${status}`);
             }
 
             await client.query('COMMIT');
+
+            if (notifyCaptured) {
+                await this.notificationsService.notifyPaymentCaptured(
+                    notifyCaptured.userId,
+                    orderId,
+                    notifyCaptured.amount,
+                    notifyCaptured.currency,
+                );
+            }
+            if (notifyFailedUserId) {
+                await this.notificationsService.notifyPaymentFailed(notifyFailedUserId, orderId);
+            }
+
             return { received: true, chargeId, orderId, action: status };
         } catch (err) {
             await client.query('ROLLBACK');

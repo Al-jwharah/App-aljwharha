@@ -1,51 +1,123 @@
-import type { Metadata } from 'next';
+'use client';
 
-export const metadata: Metadata = {
-    title: 'العمولات والرسوم | Aljwharah.ai',
-    description: 'تعرّف على رسوم الخدمة والعمولات في منصة الجوهرة للأصول الصناعية',
+import { useEffect, useState } from 'react';
+import { apiFetch, parseApiError } from '../../lib/api';
+import { getAccessToken } from '../../lib/auth';
+import { UIBadge, UIButton, UICard, UIEmptyState, UISkeleton, useToast } from '../../components/ui-kit';
+
+type Plan = {
+    code: string;
+    title_ar: string;
+    title_en: string;
+    price_amount: string;
+    currency: string;
+    period: string;
+    commission_bps_override?: number | null;
+    listing_limit: number;
+    auction_limit: number;
+    ad_credit_amount: string;
+    support_sla: string;
 };
 
 export default function PricingPage() {
+    const { push } = useToast();
+    const [plans, setPlans] = useState<Plan[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [selected, setSelected] = useState<string | null>(null);
+
+    useEffect(() => {
+        apiFetch<{ items: Plan[] }>('/plans')
+            .then((res) => setPlans(res.items || []))
+            .catch((err) => push(parseApiError(err)))
+            .finally(() => setLoading(false));
+    }, [push]);
+
+    const startSubscription = async (planCode: string) => {
+        const token = getAccessToken();
+        if (!token) {
+            push('يرجى تسجيل الدخول لاختيار الباقة');
+            return;
+        }
+
+        setSelected(planCode);
+        try {
+            const created = await apiFetch<{ subscription: { id: string }; requiresPayment: boolean }>(
+                '/subscriptions',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ planCode }),
+                },
+                token,
+            );
+
+            if (created.requiresPayment) {
+                const payment = await apiFetch<{ transactionUrl?: string }>(
+                    `/subscriptions/${created.subscription.id}/pay`,
+                    { method: 'POST' },
+                    token,
+                );
+
+                if (payment.transactionUrl) {
+                    window.location.href = payment.transactionUrl;
+                    return;
+                }
+            }
+
+            push('تم تفعيل الباقة بنجاح');
+        } catch (err) {
+            push(parseApiError(err));
+        } finally {
+            setSelected(null);
+        }
+    };
+
     return (
-        <main className="legal-page">
-            <div className="legal-container">
-                <h1>العمولات والرسوم</h1>
+        <main className="page-shell">
+            <section className="page-section">
+                <h1 className="page-title">الباقات والاشتراكات</h1>
+                <p className="page-subtitle">اختَر الباقة المناسبة وفعّلها فوراً عبر Tap مع فرض حدود التشغيل تلقائيًا.</p>
+            </section>
 
-                <section>
-                    <h2>كيف نربح؟</h2>
-                    <p>
-                        تعمل منصة الجوهرة بنموذج عمولة عند إتمام الصفقة.
-                        التسجيل وإضافة الإعلانات مجاني — لا نفرض أي رسوم إلا عند نجاح عملية البيع.
-                    </p>
-                </section>
-
-                <section>
-                    <h2>رسوم الخدمة</h2>
-                    <ul>
-                        <li><strong>إنشاء حساب:</strong> مجاني بالكامل.</li>
-                        <li><strong>إضافة إعلان:</strong> مجاني — بدون رسوم نشر.</li>
-                        <li><strong>عمولة الصفقة:</strong> تُخصم نسبة من قيمة الصفقة عند إتمامها بنجاح. تختلف النسبة حسب نوع الأصل وقيمته.</li>
-                        <li><strong>المزادات:</strong> رسوم خدمة تُحدد حسب قيمة المزاد ونوع الأصل.</li>
-                        <li><strong>خدمات إضافية:</strong> قد تتوفر خدمات تسويقية مميزة برسوم إضافية (اختيارية).</li>
-                    </ul>
-                </section>
-
-                <section>
-                    <h2>ملاحظات عامة</h2>
-                    <ul>
-                        <li>جميع الرسوم تُعرض بوضوح قبل إتمام أي عملية.</li>
-                        <li>لا توجد رسوم خفية أو مفاجئة.</li>
-                        <li>تختلف العمولة حسب نوع العرض وقيمته — للتفاصيل الدقيقة <a href="/contact">تواصل معنا</a>.</li>
-                        <li>جميع الأسعار بالريال السعودي ما لم يُذكر خلاف ذلك.</li>
-                    </ul>
-                </section>
-
-                <section className="about-cta">
-                    <h2>لديك أسئلة؟</h2>
-                    <p>فريقنا جاهز للإجابة على استفساراتكم حول الرسوم والعمولات.</p>
-                    <a href="/contact" className="btn-submit" style={{ marginTop: '16px', display: 'inline-block' }}>تواصل معنا</a>
-                </section>
-            </div>
+            {loading ? (
+                <div className="page-grid-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                        <UICard key={i}><UISkeleton height={24} width="50%" /></UICard>
+                    ))}
+                </div>
+            ) : plans.length === 0 ? (
+                <UIEmptyState title="لا توجد باقات" description="تعذر تحميل الباقات حالياً." />
+            ) : (
+                <div className="page-grid-3">
+                    {plans.map((plan) => (
+                        <UICard key={plan.code}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                                <h2>{plan.title_ar}</h2>
+                                <UIBadge tone={plan.code === 'ENTERPRISE' ? 'warning' : 'info'}>{plan.code}</UIBadge>
+                            </div>
+                            <p style={{ color: 'var(--color-text-muted)', marginBottom: 10 }}>
+                                عمولة {plan.commission_bps_override ? `${Number(plan.commission_bps_override) / 100}%` : 'افتراضية'}
+                            </p>
+                            <p style={{ fontFamily: 'var(--font-latin)', fontWeight: 800, fontSize: '1.3rem', marginBottom: 10 }}>
+                                {Number(plan.price_amount || 0).toLocaleString('en-US')} {plan.currency} / {plan.period === 'MONTHLY' ? 'شهري' : 'سنوي'}
+                            </p>
+                            <ul style={{ marginBottom: 14, color: 'var(--color-text-muted)', lineHeight: 1.9 }}>
+                                <li>حد الإعلانات: {plan.listing_limit}</li>
+                                <li>حد المزادات النشطة: {plan.auction_limit}</li>
+                                <li>رصيد إعلانات: {Number(plan.ad_credit_amount || 0).toLocaleString('en-US')} {plan.currency}</li>
+                                <li>SLA الدعم: {plan.support_sla}</li>
+                            </ul>
+                            <UIButton
+                                type="button"
+                                style={{ width: '100%' }}
+                                disabled={selected === plan.code}
+                                onClick={() => startSubscription(plan.code)}
+                            >
+                                {selected === plan.code ? 'جارٍ المعالجة...' : 'اشترك الآن'}
+                            </UIButton>
+                        </UICard>
+                    ))}
+                </div>
+            )}
         </main>
     );
 }

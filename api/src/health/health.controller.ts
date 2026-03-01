@@ -21,6 +21,38 @@ export class HealthController {
         };
     }
 
+    @Get('ready')
+    async readiness() {
+        let dbOk = false;
+        let redisOk = this.redis ? false : true;
+
+        try {
+            await this.pool.query('SELECT 1');
+            dbOk = true;
+        } catch {
+            dbOk = false;
+        }
+
+        if (this.redis) {
+            try {
+                const pong = await this.redis.ping();
+                redisOk = pong === 'PONG';
+            } catch {
+                redisOk = false;
+            }
+        }
+
+        const ok = dbOk && redisOk;
+        return {
+            status: ok ? 'ready' : 'not_ready',
+            checks: {
+                db: dbOk ? 'ok' : 'error',
+                redis: this.redis ? (redisOk ? 'ok' : 'error') : 'disabled',
+            },
+            timestamp: new Date().toISOString(),
+        };
+    }
+
     @Get('db')
     async checkDb() {
         try {

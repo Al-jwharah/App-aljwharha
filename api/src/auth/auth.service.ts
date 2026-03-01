@@ -1,4 +1,4 @@
-import { Injectable, Inject, ConflictException, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, Inject, ConflictException, UnauthorizedException, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DATABASE_POOL } from '../database/database.module';
 import * as bcrypt from 'bcrypt';
@@ -75,7 +75,6 @@ export class AuthService {
         }
 
         const record = rows[0];
-        // Revoke old token
         await this.pool.query('UPDATE refresh_tokens SET revoked = true WHERE id = $1', [record.id]);
 
         const tokens = await this.generateTokens(record.user_id, record.role);
@@ -97,6 +96,19 @@ export class AuthService {
         }
     }
 
+    async issueTokensForUser(userId: string, role: string) {
+        return this.generateTokens(userId, role);
+    }
+
+    async getUserById(userId: string) {
+        const { rows } = await this.pool.query(
+            'SELECT id, email, phone, name, role, created_at FROM users WHERE id = $1',
+            [userId],
+        );
+        if (rows.length === 0) throw new NotFoundException('المستخدم غير موجود');
+        return rows[0];
+    }
+
     private async generateTokens(userId: string, role: string) {
         const accessToken = jwt.sign(
             { sub: userId, role },
@@ -106,7 +118,7 @@ export class AuthService {
 
         const refreshToken = crypto.randomBytes(40).toString('hex');
         const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
         await this.pool.query(
             'INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',

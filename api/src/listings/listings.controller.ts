@@ -33,6 +33,7 @@ export class ListingsController {
     findAll(
         @Query('type') type?: string,
         @Query('status') status?: string,
+        @Query('q') q?: string,
         @Query('categoryId') categoryId?: string,
         @Query('page') page?: string,
         @Query('limit') limit?: string,
@@ -40,6 +41,7 @@ export class ListingsController {
         return this.listingsService.findAll({
             type,
             status,
+            q,
             categoryId: categoryId ? parseInt(categoryId, 10) : undefined,
             page: page ? parseInt(page, 10) : 1,
             limit: limit ? parseInt(limit, 10) : 20,
@@ -80,7 +82,7 @@ export class ListingsController {
     }
 
     private async assertOwnership(listingId: string, user: { userId: string; role: string }) {
-        if (user.role === 'ADMIN') return;
+        if (user.role === 'ADMIN' || user.role === 'SUPERADMIN') return;
         const listing = await this.listingsService.findOne(listingId);
         if (listing.owner_id !== user.userId) {
             throw new ForbiddenException('لا يمكنك تعديل إعلان لا تملكه');

@@ -1,74 +1,103 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { apiFetch, parseApiError } from '../../lib/api';
+import { getAccessToken } from '../../lib/auth';
+import { UIBadge, UIButton, UICard, UIEmptyState, UITable, useToast } from '../../components/ui-kit';
+
+type Order = {
+    id: string;
+    status: string;
+    ui_status?: string;
+    invoice_no?: string;
+    total_amount?: string;
+    total?: string;
+    currency?: string;
+    created_at: string;
+    reserved_until?: string;
+};
+
+const toneByStatus: Record<string, 'info' | 'success' | 'warning' | 'danger'> = {
+    PENDING_PAYMENT: 'warning',
+    PAID: 'success',
+    FULFILLED: 'success',
+    RESERVED: 'warning',
+    CANCELLED: 'danger',
+    EXPIRED: 'danger',
+    FAILED: 'danger',
+};
 
 export default function OrdersPage() {
-    const [orders, setOrders] = useState<any[]>([]);
+    const { push } = useToast();
+    const [items, setItems] = useState<Order[]>([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
-
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://api.aljwharah.ai';
 
     useEffect(() => {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('aljwharah_token') : null;
-        if (!token) { setError('يرجى تسجيل الدخول'); setLoading(false); return; }
+        const token = getAccessToken() || (typeof window !== 'undefined' ? localStorage.getItem('aljwharah_token') : null);
+        if (!token) {
+            setLoading(false);
+            return;
+        }
 
-        fetch(`${apiBase}/orders`, { headers: { Authorization: `Bearer ${token}` } })
-            .then((r) => r.json())
-            .then((data) => { setOrders(data.data || []); setLoading(false); })
-            .catch(() => { setError('تعذر تحميل الطلبات'); setLoading(false); });
-    }, []);
+        apiFetch<{ data: Order[] }>('/orders', {}, token)
+            .then((res) => setItems(res.data || []))
+            .catch((err) => push(parseApiError(err)))
+            .finally(() => setLoading(false));
+    }, [push]);
 
-    const statusMap: Record<string, { label: string; color: string }> = {
-        PENDING: { label: 'في الانتظار', color: 'var(--color-accent-strong)' },
-        RESERVED: { label: 'محجوز', color: 'var(--color-accent-strong)' },
-        PAID: { label: 'مدفوع', color: 'var(--color-success)' },
-        CANCELLED: { label: 'ملغي', color: 'var(--color-danger)' },
-        REFUNDED: { label: 'مسترد', color: 'var(--color-text-muted)' },
-    };
+    if (loading) {
+        return <main className="page-shell"><UICard>جارٍ التحميل...</UICard></main>;
+    }
+
+    if ((getAccessToken() || (typeof window !== 'undefined' ? localStorage.getItem('aljwharah_token') : null)) === null) {
+        return <main className="page-shell"><UIEmptyState title="تسجيل الدخول مطلوب" description="يرجى تسجيل الدخول لعرض الطلبات." /></main>;
+    }
 
     return (
-        <main className="legal-page">
-            <div className="legal-container">
-                <h1>طلباتي</h1>
+        <main className="page-shell">
+            <section className="page-section">
+                <h1 className="page-title">طلباتي</h1>
+                <p className="page-subtitle">متابعة جميع الطلبات والفواتير وحالات الدفع.</p>
+            </section>
 
-                {loading && <p>جارٍ التحميل...</p>}
-                {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}
-
-                {!loading && !error && orders.length === 0 && (
-                    <div style={{ padding: '40px', background: 'var(--color-surface)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                        <p>لا توجد طلبات بعد</p>
-                    </div>
-                )}
-
-                {!loading && !error && orders.length > 0 && (
-                    <div className="dashboard-list">
-                        {orders.map((order: any) => {
-                            const st = statusMap[order.status] || { label: order.status, color: '#999' };
-                            return (
-                                <a key={order.id} href={`/orders/${order.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                                    <div className="dashboard-item">
-                                        <div className="dashboard-item-info">
-                                            <strong>طلب #{order.id.substring(0, 8)}</strong>
-                                            <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                                                {new Date(order.created_at).toLocaleDateString('ar-SA')} · {order.items?.length || 0} أصول
-                                            </span>
-                                        </div>
-                                        <div className="dashboard-item-meta">
-                                            <span style={{ fontFamily: 'var(--font-latin)', fontWeight: 600 }}>
-                                                {Number(order.total).toLocaleString()} {order.currency || 'SAR'}
-                                            </span>
-                                            <span className="status-badge" style={{ background: st.color, color: '#fff' }}>
-                                                {st.label}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </a>
-                            );
-                        })}
-                    </div>
-                )}
-            </div>
+            {items.length === 0 ? (
+                <UIEmptyState title="لا توجد طلبات" description="لم يتم إنشاء أي طلب حتى الآن." />
+            ) : (
+                <UICard>
+                    <UITable>
+                        <thead>
+                            <tr>
+                                <th>الطلب</th>
+                                <th>الفاتورة</th>
+                                <th>الحالة</th>
+                                <th>القيمة</th>
+                                <th>التاريخ</th>
+                                <th>الإجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((order) => {
+                                const status = order.ui_status || order.status;
+                                return (
+                                    <tr key={order.id}>
+                                        <td>{order.id.slice(0, 8)}...</td>
+                                        <td>{order.invoice_no || '-'}</td>
+                                        <td><UIBadge tone={toneByStatus[status] || 'info'}>{status}</UIBadge></td>
+                                        <td>{Number(order.total_amount ?? order.total ?? 0).toLocaleString('en-US')} {order.currency || 'SAR'}</td>
+                                        <td>{new Date(order.created_at).toLocaleDateString('ar-SA')}</td>
+                                        <td>
+                                            <Link href={`/orders/${order.id}`}>
+                                                <UIButton type="button" variant="secondary">تفاصيل</UIButton>
+                                            </Link>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </UITable>
+                </UICard>
+            )}
         </main>
     );
 }

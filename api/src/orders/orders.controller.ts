@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Req, UseGuards, ParseUUIDPipe, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Param, Req, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { OrdersService } from './orders.service';
 
@@ -15,5 +15,15 @@ export class OrdersController {
     @Get(':id')
     findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
         return this.ordersService.findOne(id, req.user.userId);
+    }
+
+    @Get(':id/events')
+    events(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+        return this.ordersService.getOrderEvents(id, req.user.userId, req.user.role);
+    }
+
+    @Post(':id/retry-payment')
+    retryPayment(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+        return this.ordersService.retryPayment(id, req.user.userId);
     }
 }

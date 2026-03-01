@@ -1,13 +1,21 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
+import { GlobalExceptionFilter } from './filters/global-exception.filter';
+import helmet from 'helmet';
 
 async function bootstrap() {
     const logger = new Logger('Bootstrap');
 
     const app = await NestFactory.create(AppModule, {
-        rawBody: true, // Enable raw body for webhook signature verification
+        rawBody: true,
     });
+
+    // ── Security Headers ──
+    app.use(helmet({
+        contentSecurityPolicy: false, // Managed separately; avoid breaking CORS
+        crossOriginEmbedderPolicy: false,
+    }));
 
     // ── Global Validation ──
     app.useGlobalPipes(
@@ -20,9 +28,14 @@ async function bootstrap() {
         }),
     );
 
+    // ── Global Exception Filter ──
+    app.useGlobalFilters(new GlobalExceptionFilter());
+
     app.enableCors({
         origin: process.env.WEB_URL || '*',
         credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'x-request-id', 'x-internal-job-secret'],
     });
 
     const port = process.env.PORT || 8080;

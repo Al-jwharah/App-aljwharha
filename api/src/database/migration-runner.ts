@@ -10,12 +10,12 @@ export class MigrationRunner {
     constructor(@Inject(DATABASE_POOL) private readonly pool: any) { }
 
     async run(): Promise<void> {
-        // Create migrations tracking table
+        // Create migrations tracking table (schema_migrations is canonical)
         await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS _migrations (
+      CREATE TABLE IF NOT EXISTS schema_migrations (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL UNIQUE,
-        applied_at TIMESTAMPTZ DEFAULT NOW()
+        filename VARCHAR(255) NOT NULL UNIQUE,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
 
@@ -32,7 +32,7 @@ export class MigrationRunner {
 
         for (const file of files) {
             const { rows } = await this.pool.query(
-                'SELECT 1 FROM _migrations WHERE name = $1',
+                'SELECT 1 FROM schema_migrations WHERE filename = $1',
                 [file],
             );
             if (rows.length > 0) continue;
@@ -40,9 +40,7 @@ export class MigrationRunner {
             this.logger.log(`Running migration: ${file}`);
             const sql = readFileSync(join(migrationsDir, file), 'utf-8');
             await this.pool.query(sql);
-            await this.pool.query('INSERT INTO _migrations (name) VALUES ($1)', [
-                file,
-            ]);
+            await this.pool.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
             this.logger.log(`✅ Applied: ${file}`);
         }
 
