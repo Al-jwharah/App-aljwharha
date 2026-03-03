@@ -4,7 +4,6 @@ import {
     Post,
     Req,
     UseGuards,
-    UnauthorizedException,
 } from '@nestjs/common';
 import { AiService } from './ai.service';
 import { AiSearchDto } from './dto/ai-search.dto';
@@ -56,9 +55,18 @@ export class AiController {
         return this.aiService.adminInsights(req.user.userId);
     }
 
+    @Post('agent-report')
+    @UseGuards(AuthGuard, RoleGuard)
+    @Roles('ADMIN', 'SUPERADMIN', 'AGENT')
+    agentReport(@Req() req: any) {
+        return this.aiService.agentReport(req.user.userId);
+    }
+
     private extractToken(authHeader?: string) {
         if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
         const token = authHeader.substring(7).trim();
         return token || null;
     }
 }
+
+

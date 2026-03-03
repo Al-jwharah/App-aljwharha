@@ -1,137 +1,77 @@
 import type { Metadata } from 'next';
-import { IBM_Plex_Sans_Arabic, Inter } from 'next/font/google';
-import Link from 'next/link';
+import { Cairo, Inter } from 'next/font/google';
 import { AppProviders } from '../components/providers';
-import { ThemeToggle } from '../components/theme-toggle';
+import { SiteHeader, SiteFooter } from '../components/site-chrome';
+import { PathAwareChrome } from '../components/path-chrome';
 import './globals.css';
 
-const arabicFont = IBM_Plex_Sans_Arabic({
+const arabicFont = Cairo({
     subsets: ['arabic', 'latin'],
-    weight: ['300', '400', '500', '600', '700'],
+    weight: ['300', '400', '500', '600', '700', '800', '900'],
     variable: '--alj-font-arabic',
+    display: 'swap',
 });
 
 const latinFont = Inter({
     subsets: ['latin'],
-    weight: ['300', '400', '500', '600', '700'],
+    weight: ['300', '400', '500', '600', '700', '800', '900'],
     variable: '--alj-font-latin',
+    display: 'swap',
 });
 
 export const metadata: Metadata = {
     metadataBase: new URL('https://aljwharah.ai'),
     title: {
-        default: 'Aljwharah.ai | منصة تداول الأصول الصناعية',
-        template: '%s | Aljwharah.ai',
+        default: 'الجوهرة | Aljwharah.ai — منصة تداول الأصول الصناعية والعلامات التجارية',
+        template: '%s | الجوهرة Aljwharah.ai',
     },
-    description: 'Aljwharah.ai منصة عربية احترافية لتداول الأصول الصناعية والتجارية في المملكة العربية السعودية.',
+    description: 'منصة الجوهرة Aljwharah.ai — أول منصة سعودية متخصصة لتداول الأصول الصناعية والعلامات التجارية والأسماء التجارية والمصانع والمعدات. مزادات مباشرة، تقييم ذكي، ومدفوعات آمنة عبر Tap.',
+    keywords: ['تداول أصول صناعية', 'بيع علامات تجارية', 'مزادات صناعية', 'منصة الجوهرة', 'aljwharah', 'بيع مصانع', 'شراء معدات صناعية', 'أسماء تجارية للبيع', 'علامات تجارية مسجلة', 'مزاد سعودي', 'منصة تداول سعودية'],
     openGraph: {
         type: 'website',
         locale: 'ar_SA',
-        title: 'Aljwharah.ai | منصة تداول الأصول الصناعية',
-        description: 'تداول وبيع وشراء الأصول الصناعية مع إدارة مزادات ومدفوعات احترافية.',
+        title: 'الجوهرة | Aljwharah.ai — منصة تداول الأصول الصناعية والعلامات التجارية',
+        description: 'أول منصة سعودية متخصصة لتداول الأصول الصناعية والعلامات التجارية. مزادات مباشرة، تقييم ذكي AI، ومدفوعات آمنة.',
         url: 'https://aljwharah.ai',
-        siteName: 'Aljwharah.ai',
+        siteName: 'الجوهرة Aljwharah.ai',
+        images: [{ url: 'https://aljwharah.ai/og-image.png', width: 1200, height: 630, alt: 'منصة الجوهرة — تداول الأصول الصناعية' }],
     },
     twitter: {
         card: 'summary_large_image',
-        title: 'Aljwharah.ai | منصة تداول الأصول الصناعية',
-        description: 'منصة عربية لتداول الأصول الصناعية والتجارية.',
+        title: 'الجوهرة | Aljwharah.ai — منصة تداول الأصول الصناعية',
+        description: 'منصة سعودية متخصصة لتداول الأصول الصناعية والعلامات التجارية.',
     },
+    robots: { index: true, follow: true, googleBot: { index: true, follow: true } },
+    alternates: { canonical: 'https://aljwharah.ai' },
+    verification: { google: 'GOOGLE_SITE_VERIFICATION_TOKEN' },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
         <html lang="ar" dir="rtl">
+            <head>
+                <script type="application/ld+json" dangerouslySetInnerHTML={{
+                    __html: JSON.stringify({
+                        '@context': 'https://schema.org',
+                        '@type': 'WebSite',
+                        name: 'الجوهرة Aljwharah.ai',
+                        url: 'https://aljwharah.ai',
+                        description: 'منصة سعودية متخصصة لتداول الأصول الصناعية والعلامات التجارية',
+                        potentialAction: {
+                            '@type': 'SearchAction',
+                            target: 'https://aljwharah.ai/listings?q={search_term_string}',
+                            'query-input': 'required name=search_term_string'
+                        }
+                    })
+                }} />
+            </head>
             <body className={`${arabicFont.variable} ${latinFont.variable}`}>
                 <AppProviders>
-                    <TopContactBar />
-                    <Header />
-                    <div className="page-content">{children}</div>
-                    <Footer />
+                    <PathAwareChrome>
+                        {children}
+                    </PathAwareChrome>
                 </AppProviders>
             </body>
         </html>
-    );
-}
-
-function TopContactBar() {
-    return (
-        <div className="top-contact-bar">
-            <div className="top-contact-inner">
-                <a href="mailto:support@aljwharah.ai">support@aljwharah.ai</a>
-                <a href="tel:+966500000000">+966 50 000 0000</a>
-                <Link href="/support">مركز الدعم</Link>
-                <Link href="/pricing">الباقات</Link>
-                <a href="/auth/sso/google/start" target="_blank" rel="noreferrer">دخول Google SSO</a>
-            </div>
-        </div>
-    );
-}
-
-function Header() {
-    return (
-        <header className="site-header">
-            <div className="header-inner">
-                <Link href="/" className="logo-link">
-                    <span className="logo-text">Aljwharah.ai</span>
-                </Link>
-                <nav className="main-nav">
-                    <Link href="/" className="nav-link">الرئيسية</Link>
-                    <Link href="/auctions" className="nav-link">المزادات</Link>
-                    <Link href="/listings" className="nav-link">الإعلانات</Link>
-                    <Link href="/seller" className="nav-link">لوحة البائع</Link>
-                    <Link href="/orders" className="nav-link">طلباتي</Link>
-                    <Link href="/ai" className="nav-link">الذكاء الاصطناعي</Link>
-                    <Link href="/support" className="nav-link">الدعم</Link>
-                    <Link href="/admin" className="nav-link">الإدارة</Link>
-                    <Link href="/owner" className="nav-link">المالك</Link>
-                </nav>
-                <div className="header-tools">
-                    <ThemeToggle />
-                    <Link href="/pricing" className="nav-link nav-link-pill">الباقات</Link>
-                </div>
-            </div>
-        </header>
-    );
-}
-
-function Footer() {
-    return (
-        <footer className="site-footer" id="contact">
-            <div className="footer-inner">
-                <div className="footer-grid footer-grid-4">
-                    <div className="footer-col">
-                        <h3>المنصة</h3>
-                        <Link href="/about">من نحن</Link>
-                        <Link href="/how-it-works">كيف تعمل</Link>
-                        <Link href="/support">الأسئلة الشائعة</Link>
-                    </div>
-                    <div className="footer-col">
-                        <h3>السوق</h3>
-                        <Link href="/auctions">المزادات</Link>
-                        <Link href="/listings">الإعلانات</Link>
-                        <Link href="/seller">بع الآن</Link>
-                    </div>
-                    <div className="footer-col">
-                        <h3>القانونية</h3>
-                        <Link href="/terms">الشروط</Link>
-                        <Link href="/privacy">الخصوصية</Link>
-                        <Link href="/refund">الاسترجاع</Link>
-                        <Link href="/ip-policy">سياسة الملكية الفكرية</Link>
-                        <Link href="/trademark-sale-policy">سياسة بيع العلامات والأسماء</Link>
-                    </div>
-                    <div className="footer-col">
-                        <h3>التواصل</h3>
-                        <a href="mailto:support@aljwharah.ai">support@aljwharah.ai</a>
-                        <a href="tel:+966500000000">+966 50 000 0000</a>
-                        <a href="https://www.linkedin.com" target="_blank" rel="noreferrer">LinkedIn</a>
-                        <a href="https://x.com" target="_blank" rel="noreferrer">X</a>
-                    </div>
-                </div>
-                <div className="footer-bottom">
-                    <p>© 2026 Aljwharah.ai — جميع الحقوق محفوظة</p>
-                </div>
-            </div>
-        </footer>
     );
 }

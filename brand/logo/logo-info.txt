@@ -1,2 +1,16 @@
-Primary approved logo: Aljwharah Assets (Gold + Dark Green)
-Use dark background version for headers.
+Approved Logo Guidance - Aljwharah Assets
+
+Primary identity:
+- Brand palette: Dark Green + Gold Accent
+- Preferred use on dark or neutral high-contrast backgrounds
+
+Minimum quality rules:
+1) Preserve original proportions.
+2) Maintain clear-space around logo mark.
+3) Do not apply blur, stretch, or unapproved gradients.
+4) Use official source assets only from this directory.
+
+Recommended usage:
+- Website header and hero branding
+- Favicon/mark usage for compact UI surfaces
+- Investor and sales collateral

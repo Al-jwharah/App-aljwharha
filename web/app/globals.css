@@ -15,7 +15,7 @@
     --radius-md: 12px;
     --radius-lg: 18px;
     --radius-xl: 24px;
-    --font-arabic: var(--alj-font-arabic), 'Tajawal', sans-serif;
+    --font-arabic: var(--alj-font-arabic), 'Cairo', 'Tajawal', sans-serif;
     --font-latin: var(--alj-font-latin), 'Segoe UI', sans-serif;
 }
 
@@ -554,6 +554,7 @@ textarea {
         font-size: 0.85rem;
     }
 }
+
 .top-contact-bar {
     background: #0b2e22;
     color: rgba(255, 255, 255, 0.88);
@@ -618,6 +619,7 @@ textarea {
 }
 
 @media (max-width: 1100px) {
+
     .footer-grid-4,
     .page-grid-3 {
         grid-template-columns: repeat(2, 1fr);
@@ -641,6 +643,19 @@ textarea {
     }
 }
 
+/* ─── Homepage Override ─── */
+/* When the homepage component is rendered, hide root layout chrome
+   because the homepage has its own self-contained header/footer */
+body:has([data-homepage]) .top-contact-bar,
+body:has([data-homepage]) .site-header,
+body:has([data-homepage]) .site-footer {
+    display: none !important;
+}
+
+body:has([data-homepage]) .page-content {
+    min-height: auto;
+}
+
 /* =========================
    Premium Theme System V2
 ========================= */
@@ -657,7 +672,7 @@ textarea {
     --color-text-muted: #4b5563;
     --shadow-soft: 0 14px 30px rgba(30, 27, 75, 0.08);
     --shadow-strong: 0 24px 48px rgba(30, 27, 75, 0.18);
-    --hero-glass: linear-gradient(140deg, rgba(255,255,255,0.9), rgba(240,244,255,0.74));
+    --hero-glass: linear-gradient(140deg, rgba(255, 255, 255, 0.9), rgba(240, 244, 255, 0.74));
 }
 
 html[data-theme='dark'] {
@@ -673,12 +688,12 @@ html[data-theme='dark'] {
     --color-text-muted: #94a3b8;
     --shadow-soft: 0 14px 30px rgba(2, 8, 23, 0.42);
     --shadow-strong: 0 24px 48px rgba(2, 8, 23, 0.6);
-    --hero-glass: linear-gradient(140deg, rgba(18,27,51,0.92), rgba(15,23,42,0.82));
+    --hero-glass: linear-gradient(140deg, rgba(18, 27, 51, 0.92), rgba(15, 23, 42, 0.82));
 }
 
 body {
-    background: radial-gradient(circle at 10% 0%, rgba(37,99,235,0.12), transparent 38%),
-        radial-gradient(circle at 100% 12%, rgba(16,185,129,0.12), transparent 38%),
+    background: radial-gradient(circle at 10% 0%, rgba(37, 99, 235, 0.12), transparent 38%),
+        radial-gradient(circle at 100% 12%, rgba(16, 185, 129, 0.12), transparent 38%),
         var(--color-surface);
     color: var(--color-text);
     transition: background 200ms ease, color 200ms ease;
@@ -800,9 +815,15 @@ body {
 }
 
 @keyframes bidPulse {
+
     0%,
-    100% { transform: scale(1); }
-    50% { transform: scale(1.06); }
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.06);
+    }
 }
 
 .ai-score-grid {

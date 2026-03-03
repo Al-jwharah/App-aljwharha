@@ -1,16 +1,45 @@
-import { Injectable, Inject, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, BadRequestException, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { ConfigService } from '@nestjs/config';
 import { DATABASE_POOL } from '../database/database.module';
 import { AuditService } from '../audit/audit.service';
 
 type AiRole = 'BUYER' | 'SELLER' | 'ADMIN';
+type AgentMode = 'llm' | 'fallback';
+type AgentProvider = 'openai' | 'internal';
+type AgentResult<T> = {
+    mode: AgentMode;
+    provider: AgentProvider;
+    model: string;
+    data: T | null;
+    error?: string;
+};
+type AgentMeta = {
+    mode: AgentMode;
+    provider: AgentProvider;
+    model: string;
+    llmEnabled: boolean;
+    fallbackReason?: string;
+};
 
 @Injectable()
 export class AiService {
+    private readonly logger = new Logger(AiService.name);
+    private readonly llmApiKey: string;
+    private readonly llmModel: string;
+    private readonly llmResponsesUrl: string;
+    private readonly llmTimeoutMs: number;
     constructor(
         @Inject(DATABASE_POOL) private readonly pool: any,
         private readonly auditService: AuditService,
-    ) { }
+        private readonly configService: ConfigService,
+    ) {
+        this.llmApiKey = (this.configService.get<string>('OPENAI_API_KEY') || '').trim();
+        this.llmModel = (this.configService.get<string>('OPENAI_MODEL') || 'gpt-5').trim();
+        this.llmResponsesUrl = (this.configService.get<string>('OPENAI_RESPONSES_URL') || 'https://api.openai.com/v1/responses').trim();
+        const timeoutCandidate = Number(this.configService.get<string>('OPENAI_TIMEOUT_MS') || 15000);
+        this.llmTimeoutMs = Number.isFinite(timeoutCandidate) && timeoutCandidate > 0 ? timeoutCandidate : 15000;
+    }
 
     async search(query: string, userId?: string | null, locale = 'ar') {
         const clean = query.trim();
@@ -62,13 +91,48 @@ export class AiService {
             type: row.type,
         }));
 
+        const fallbackNarrative = locale.startsWith('ar')
+            ? `تم تحليل الاستعلام وإرجاع ${rows.length} نتيجة مع مطابقة للنوع/المدينة/السقف السعري عند توفرها.`
+            : `The query was analyzed and returned ${rows.length} results with optional type/city/price constraints.`;
+        const fallbackNextActions = locale.startsWith('ar')
+            ? ['تضييق البحث بالمدينة أو نوع الأصل.', 'استخدم سقفًا سعريًا أدق.', 'راجع الإعلانات الأحدث أولًا.']
+            : ['Narrow by city or asset type.', 'Use a tighter budget cap.', 'Review most recent listings first.'];
+        const fallbackRiskNotes = locale.startsWith('ar')
+            ? ['تحقق من المستندات القانونية قبل الدفع.', 'قارن السعر بعينات مشابهة قبل التفاوض.']
+            : ['Verify legal documents before payment.', 'Benchmark price against similar assets before negotiation.'];
+
+        const agentEnhancement = await this.generateAgentJson<{
+            narrative?: string;
+            nextActions?: string[];
+            riskNotes?: string[];
+        }>({
+            feature: 'search',
+            systemPrompt: locale.startsWith('ar')
+                ? 'أنت وكيل بحث احترافي لمنصة تداول أصول صناعية. أرجع JSON فقط بمفاتيح narrative وnextActions وriskNotes.'
+                : 'You are a professional search agent for an industrial asset marketplace. Return JSON only with narrative, nextActions, and riskNotes.',
+            userPayload: {
+                query: clean,
+                inferredFilters: inferred,
+                topSuggestions: suggestions,
+                resultsCount: rows.length,
+            },
+            maxTokens: 600,
+        });
+
+        const agentMeta = this.toAgentMeta(agentEnhancement);
+        const agentNarrative = (agentEnhancement.data?.narrative || fallbackNarrative).trim();
+        const agentNextActions = this.pickList(agentEnhancement.data?.nextActions, fallbackNextActions, 5);
+        const agentRiskNotes = this.pickList(agentEnhancement.data?.riskNotes, fallbackRiskNotes, 4);
+
+        const role = await this.resolveAiRole(userId);
+
         await this.logAiRequest({
             userId: userId || null,
-            role: this.roleFromUserId(userId),
+            role,
             feature: 'search',
             prompt: clean,
-            responseSummary: `results=${rows.length}`,
-            meta: { inferred },
+            responseSummary: `results=${rows.length};mode=${agentMeta.mode}`,
+            meta: { inferred, agentMode: agentMeta.mode, llmModel: agentMeta.model },
         });
 
         return {
@@ -77,6 +141,12 @@ export class AiService {
             resultsCount: rows.length,
             suggestions,
             results: rows,
+            agent: {
+                ...agentMeta,
+                narrative: agentNarrative,
+                nextActions: agentNextActions,
+                riskNotes: agentRiskNotes,
+            },
         };
     }
 
@@ -123,19 +193,19 @@ export class AiService {
             throw new BadRequestException('يلزم عنوان أو وصف على الأقل');
         }
 
-        const keywords = this.extractKeywords(`${source.title} ${source.description}`);
-        const titlePieces = [source.title.trim(), ...keywords.slice(0, 3)].filter(Boolean);
-        const improvedTitle = this.limitWords(this.uniqueJoin(titlePieces, ' - '), 14);
+        const deterministicKeywords = this.extractKeywords(`${source.title} ${source.description}`);
+        const deterministicTitlePieces = [source.title.trim(), ...deterministicKeywords.slice(0, 3)].filter(Boolean);
+        const deterministicTitle = this.limitWords(this.uniqueJoin(deterministicTitlePieces, ' - '), 14);
 
         const enhancedDescriptionParts = [
             source.description.trim(),
             source.city ? `الموقع: ${source.city}.` : '',
             source.category ? `الفئة: ${source.category}.` : '',
-            keywords.length ? `الكلمات الدالة: ${keywords.slice(0, 5).join('، ')}.` : '',
+            deterministicKeywords.length ? `الكلمات الدالة: ${deterministicKeywords.slice(0, 5).join('، ')}.` : '',
             'يرجى إرفاق وثائق الملكية والبيانات التشغيلية الكاملة لرفع موثوقية الطلب.',
         ].filter(Boolean);
 
-        const improvedDescription = enhancedDescriptionParts.join(' ');
+        const deterministicDescription = enhancedDescriptionParts.join(' ');
 
         const comparable = await this.priceComparable(source.type, source.category);
         const guidance = comparable
@@ -154,13 +224,42 @@ export class AiService {
                 note: 'لا توجد بيانات كافية للتسعير المقارن حالياً',
             };
 
+        const enhancement = await this.generateAgentJson<{
+            title?: string;
+            description?: string;
+            keywords?: string[];
+        }>({
+            feature: 'listing-improve',
+            systemPrompt: 'أنت وكيل كتابة إعلانية احترافي لمنصة B2B صناعية. أعد JSON فقط بمفاتيح title وdescription وkeywords. العنوان لا يزيد عن 14 كلمة والوصف مهني مباشر.',
+            userPayload: {
+                source,
+                deterministicTitle,
+                deterministicDescription,
+                priceGuidance: guidance,
+            },
+            maxTokens: 700,
+        });
+
+        const agentMeta = this.toAgentMeta(enhancement);
+        const llmTitle = typeof enhancement.data?.title === 'string' ? enhancement.data.title : '';
+        const llmDescription = typeof enhancement.data?.description === 'string' ? enhancement.data.description : '';
+
+        const mergedKeywords = [
+            ...this.pickList(enhancement.data?.keywords, [], 10),
+            ...deterministicKeywords,
+        ];
+        const keywords = [...new Set(mergedKeywords.map((item) => item.trim()).filter(Boolean))].slice(0, 10);
+
+        const improvedTitle = this.limitWords((llmTitle || deterministicTitle).replace(/\s+/g, ' ').trim(), 14);
+        const improvedDescription = (llmDescription || deterministicDescription).replace(/\s+/g, ' ').trim();
+
         await this.logAiRequest({
             userId,
             role: 'SELLER',
             feature: 'listing-improve',
             prompt: `${source.title}\n${source.description}`,
-            responseSummary: `title=${improvedTitle.substring(0, 60)}`,
-            meta: { listingId: input.listingId || null, keywords },
+            responseSummary: `title=${improvedTitle.substring(0, 60)};mode=${agentMeta.mode}`,
+            meta: { listingId: input.listingId || null, keywords, agentMode: agentMeta.mode, llmModel: agentMeta.model },
         });
 
         return {
@@ -176,6 +275,7 @@ export class AiService {
                 description: improvedDescription,
                 suggestedPrice: guidance.suggestedPrice,
             },
+            agent: agentMeta,
         };
     }
 
@@ -203,20 +303,58 @@ export class AiService {
         if (rows.length === 0) throw new NotFoundException('التذكرة غير موجودة');
 
         const ticket = rows[0];
-        const tone = this.detectSupportTone(userMessage);
-        const urgency = this.detectUrgency(userMessage, ticket.priority);
+        const fallbackTone = this.detectSupportTone(userMessage);
+        const fallbackUrgency = this.detectUrgency(userMessage, ticket.priority);
+        const fallbackDraft = locale.startsWith('ar')
+            ? this.buildArabicSupportDraft(ticket.subject, userMessage, fallbackTone, fallbackUrgency)
+            : this.buildEnglishSupportDraft(ticket.subject, userMessage, fallbackTone, fallbackUrgency);
+        const fallbackSuggestions = [
+            locale.startsWith('ar') ? 'تحقق من حالة الدفع المرتبطة بالطلب إن وُجد.' : 'Check the related payment status if applicable.',
+            locale.startsWith('ar') ? 'أضف توقيتًا متوقعًا للرد القادم.' : 'Add an expected next update time.',
+            locale.startsWith('ar') ? 'اطلب مستندات داعمة إذا كانت الحالة نزاع ملكية.' : 'Request supporting documents for ownership disputes.',
+        ];
 
-        const draft = locale.startsWith('ar')
-            ? this.buildArabicSupportDraft(ticket.subject, userMessage, tone, urgency)
-            : this.buildEnglishSupportDraft(ticket.subject, userMessage, tone, urgency);
+        const enhancement = await this.generateAgentJson<{
+            draft?: string;
+            tone?: string;
+            urgency?: string;
+            suggestions?: string[];
+        }>({
+            feature: 'support-draft',
+            systemPrompt: locale.startsWith('ar')
+                ? 'أنت وكيل دعم احترافي. أعد JSON فقط بمفاتيح draft وtone وurgency وsuggestions. tone واحدة من: escalated,friendly,neutral. urgency واحدة من: CRITICAL,HIGH,MEDIUM,LOW.'
+                : 'You are a professional support agent. Return JSON only with draft, tone, urgency, suggestions. tone in escalated/friendly/neutral and urgency in CRITICAL/HIGH/MEDIUM/LOW.',
+            userPayload: {
+                ticket: {
+                    id: ticket.id,
+                    subject: ticket.subject,
+                    category: ticket.category,
+                    priority: ticket.priority,
+                    status: ticket.status,
+                    recentMessages: ticket.recent_messages,
+                },
+                userMessage,
+                fallbackTone,
+                fallbackUrgency,
+            },
+            maxTokens: 700,
+        });
+
+        const agentMeta = this.toAgentMeta(enhancement);
+        const tone = this.sanitizeTone(enhancement.data?.tone || fallbackTone);
+        const urgency = this.sanitizeUrgency(enhancement.data?.urgency || fallbackUrgency);
+        const draft = typeof enhancement.data?.draft === 'string' && enhancement.data.draft.trim()
+            ? enhancement.data.draft.trim()
+            : fallbackDraft;
+        const suggestions = this.pickList(enhancement.data?.suggestions, fallbackSuggestions, 5);
 
         await this.logAiRequest({
             userId: actorUserId,
             role: 'ADMIN',
             feature: 'support-draft',
             prompt: `${ticket.subject}\n${userMessage}`,
-            responseSummary: `urgency=${urgency}`,
-            meta: { ticketId, urgency, tone },
+            responseSummary: `urgency=${urgency};mode=${agentMeta.mode}`,
+            meta: { ticketId, urgency, tone, agentMode: agentMeta.mode, llmModel: agentMeta.model },
         });
 
         return {
@@ -224,11 +362,8 @@ export class AiService {
             urgency,
             tone,
             draft,
-            suggestions: [
-                locale.startsWith('ar') ? 'تحقق من حالة الدفع المرتبطة بالطلب إن وُجد.' : 'Check the related payment status if applicable.',
-                locale.startsWith('ar') ? 'أضف توقيتًا متوقعًا للرد القادم.' : 'Add an expected next update time.',
-                locale.startsWith('ar') ? 'اطلب مستندات داعمة إذا كانت الحالة نزاع ملكية.' : 'Request supporting documents for ownership disputes.',
-            ],
+            suggestions,
+            agent: agentMeta,
         };
     }
 
@@ -271,29 +406,216 @@ export class AiService {
             highPriorityTickets: pendingTickets.rows[0]?.count ?? 0,
         };
 
-        const recommendations: string[] = [];
-        if (summary.stuckOrders > 0) recommendations.push('تشغيل reconcile للمدفوعات ومراجعة reservations المنتهية.');
-        if (summary.failedPayments24h > 5) recommendations.push('مراجعة فشل الدفع مع Tap وتحليل الأسباب المتكررة.');
-        if (summary.suspiciousBidPatterns > 0) recommendations.push('مراجعة حسابات المزايدة ذات النشاط غير الطبيعي وتطبيق فحص إضافي.');
-        if (summary.highPriorityTickets > 0) recommendations.push('تخصيص وكلاء دعم إضافيين لتذاكر الأولوية العالية.');
-        if (recommendations.length === 0) recommendations.push('مؤشرات التشغيل مستقرة خلال الفترة الحالية.');
+        const fallbackRecommendations: string[] = [];
+        if (summary.stuckOrders > 0) fallbackRecommendations.push('تشغيل reconcile للمدفوعات ومراجعة reservations المنتهية.');
+        if (summary.failedPayments24h > 5) fallbackRecommendations.push('مراجعة فشل الدفع مع Tap وتحليل الأسباب المتكررة.');
+        if (summary.suspiciousBidPatterns > 0) fallbackRecommendations.push('مراجعة حسابات المزايدة ذات النشاط غير الطبيعي وتطبيق فحص إضافي.');
+        if (summary.highPriorityTickets > 0) fallbackRecommendations.push('تخصيص وكلاء دعم إضافيين لتذاكر الأولوية العالية.');
+        if (fallbackRecommendations.length === 0) fallbackRecommendations.push('مؤشرات التشغيل مستقرة خلال الفترة الحالية.');
+
+        const enhancement = await this.generateAgentJson<{
+            narrative?: string;
+            recommendations?: string[];
+            priorities?: string[];
+        }>({
+            feature: 'admin-insights',
+            systemPrompt: 'أنت وكيل عمليات احترافي لمنصة تداول B2B. أعد JSON فقط بمفاتيح narrative وrecommendations وpriorities.',
+            userPayload: {
+                summary,
+                fallbackRecommendations,
+            },
+            maxTokens: 700,
+        });
+
+        const agentMeta = this.toAgentMeta(enhancement);
+        const recommendations = this.pickList(enhancement.data?.recommendations, fallbackRecommendations, 6);
+        const priorities = this.pickList(
+            enhancement.data?.priorities,
+            [
+                'سلامة دورة الطلب والدفع',
+                'خفض فشل المدفوعات',
+                'ضبط نزاهة المزادات',
+                'رفع سرعة الاستجابة للدعم',
+            ],
+            5,
+        );
+
+        const narrative = typeof enhancement.data?.narrative === 'string' && enhancement.data.narrative.trim()
+            ? enhancement.data.narrative.trim()
+            : 'ملخص تشغيلي يومي مبني على مؤشرات حية للأوامر، المدفوعات، المزادات، والدعم.';
 
         await this.logAiRequest({
             userId: actorUserId,
             role: 'ADMIN',
             feature: 'admin-insights',
             prompt: 'daily ops snapshot',
-            responseSummary: JSON.stringify(summary),
-            meta: summary,
+            responseSummary: JSON.stringify({ ...summary, mode: agentMeta.mode }),
+            meta: { ...summary, agentMode: agentMeta.mode, llmModel: agentMeta.model },
         });
 
         return {
             summary,
             recommendations,
+            priorities,
+            narrative,
             generatedAt: new Date().toISOString(),
+            agent: agentMeta,
         };
     }
+    async agentReport(actorUserId: string) {
+        const [
+            usageRows,
+            featureRows,
+            roleRows,
+            stuckOrders,
+            failedPayments,
+            suspiciousBids,
+            pendingTickets,
+        ] = await Promise.all([
+            this.pool.query(
+                `SELECT
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h
+                 FROM ai_requests
+                 WHERE created_at >= NOW() - INTERVAL '30 days'`,
+            ),
+            this.pool.query(
+                `SELECT feature, COUNT(*)::int AS count
+                 FROM ai_requests
+                 WHERE created_at >= NOW() - INTERVAL '30 days'
+                 GROUP BY feature
+                 ORDER BY count DESC, feature ASC
+                 LIMIT 10`,
+            ),
+            this.pool.query(
+                `SELECT role, COUNT(*)::int AS count
+                 FROM ai_requests
+                 WHERE created_at >= NOW() - INTERVAL '30 days'
+                 GROUP BY role
+                 ORDER BY count DESC, role ASC`,
+            ),
+            this.pool.query(
+                `SELECT COUNT(*)::int AS count
+                 FROM orders
+                 WHERE status IN ('RESERVED', 'PENDING_PAYMENT')
+                   AND created_at < NOW() - INTERVAL '20 minutes'`,
+            ),
+            this.pool.query(
+                `SELECT COUNT(*)::int AS count
+                 FROM payments
+                 WHERE status = 'FAILED'
+                   AND updated_at >= NOW() - INTERVAL '24 hours'`,
+            ),
+            this.pool.query(
+                `SELECT COUNT(*)::int AS count
+                 FROM (
+                   SELECT auction_id, user_id, COUNT(*) AS c
+                   FROM bids
+                   WHERE created_at >= NOW() - INTERVAL '1 hour'
+                   GROUP BY auction_id, user_id
+                   HAVING COUNT(*) >= 10
+                 ) x`,
+            ),
+            this.pool.query(
+                `SELECT COUNT(*)::int AS count
+                 FROM support_tickets
+                 WHERE status IN ('OPEN', 'PENDING')
+                   AND priority IN ('HIGH', 'CRITICAL')`,
+            ),
+        ]);
 
+        const usage = {
+            total30d: usageRows.rows[0]?.total ?? 0,
+            last24h: usageRows.rows[0]?.last_24h ?? 0,
+        };
+
+        const topFeatures = featureRows.rows.map((row: any) => ({
+            feature: row.feature,
+            count: Number(row.count) || 0,
+        }));
+
+        const usageByRole = roleRows.rows.map((row: any) => ({
+            role: row.role,
+            count: Number(row.count) || 0,
+        }));
+
+        const platformIndicators = {
+            stuckOrders: stuckOrders.rows[0]?.count ?? 0,
+            failedPayments24h: failedPayments.rows[0]?.count ?? 0,
+            suspiciousBidPatterns: suspiciousBids.rows[0]?.count ?? 0,
+            highPriorityTickets: pendingTickets.rows[0]?.count ?? 0,
+        };
+
+        const fallbackReport = {
+            executiveSummary: 'تم تفعيل الوكيل الذكي على عمليات البحث، تحسين الإعلانات، وصياغة الدعم مع تتبع تدقيقي كامل.',
+            strongestAdvantages: [
+                'تشغيل موحد عبر السوق والدعم والإدارة ضمن API واحدة.',
+                'تحسين تلقائي للمخرجات مع fallback آمن عند غياب مفاتيح LLM.',
+                'سجل تدقيق AI Requests + Audit Log لكل عملية حساسة.',
+                'قابلية تشغيل نموذج أقوى عبر متغير OPENAI_MODEL دون تغيير الكود.',
+            ],
+            completionChecklist: [
+                'تفعيل تكامل نموذج LLM اختياري (OpenAI).',
+                'دعم fallback داخلي لضمان الاستمرارية.',
+                'توليد تقرير تنفيذي للوكيل مع مؤشرات تشغيل.',
+                'تسجيل كل استدعاء AI لأغراض الحوكمة والتتبع.',
+            ],
+            nextMilestones: [
+                'ضبط OPENAI_API_KEY في بيئة الإنتاج.',
+                'اختبار A/B بين نموذجين عبر OPENAI_MODEL.',
+                'إضافة قواعد تقييم جودة الاستجابات (quality scoring).',
+            ],
+        };
+
+        const enhancement = await this.generateAgentJson<{
+            executiveSummary?: string;
+            strongestAdvantages?: string[];
+            completionChecklist?: string[];
+            nextMilestones?: string[];
+        }>({
+            feature: 'agent-report',
+            systemPrompt: 'أنت مستشار تنفيذي للذكاء الاصطناعي في منصة تجارة B2B. أعد JSON فقط بمفاتيح executiveSummary وstrongestAdvantages وcompletionChecklist وnextMilestones.',
+            userPayload: {
+                usage,
+                topFeatures,
+                usageByRole,
+                platformIndicators,
+                fallbackReport,
+            },
+            maxTokens: 900,
+        });
+
+        const agentMeta = this.toAgentMeta(enhancement);
+
+        const report = {
+            executiveSummary: typeof enhancement.data?.executiveSummary === 'string' && enhancement.data.executiveSummary.trim()
+                ? enhancement.data.executiveSummary.trim()
+                : fallbackReport.executiveSummary,
+            strongestAdvantages: this.pickList(enhancement.data?.strongestAdvantages, fallbackReport.strongestAdvantages, 6),
+            completionChecklist: this.pickList(enhancement.data?.completionChecklist, fallbackReport.completionChecklist, 8),
+            nextMilestones: this.pickList(enhancement.data?.nextMilestones, fallbackReport.nextMilestones, 6),
+        };
+
+        await this.logAiRequest({
+            userId: actorUserId,
+            role: 'ADMIN',
+            feature: 'agent-report',
+            prompt: 'ai agent execution report',
+            responseSummary: `total30d=${usage.total30d};mode=${agentMeta.mode}`,
+            meta: { usage, topFeatures, platformIndicators, agentMode: agentMeta.mode, llmModel: agentMeta.model },
+        });
+
+        return {
+            generatedAt: new Date().toISOString(),
+            usageWindowDays: 30,
+            usage,
+            topFeatures,
+            usageByRole,
+            platformIndicators,
+            report,
+            agent: agentMeta,
+        };
+    }
     private inferFilters(query: string) {
         const q = query.toLowerCase();
 
@@ -414,9 +736,221 @@ export class AiService {
         return `${opener} Regarding "${subject}", we received your note: "${userMessage}". We will review the related records and update you shortly. Current priority: ${urgency}.`;
     }
 
-    private roleFromUserId(userId?: string | null): AiRole {
+    private sanitizeTone(input: string) {
+        const normalized = (input || '').toLowerCase();
+        if (normalized === 'escalated' || normalized === 'friendly' || normalized === 'neutral') {
+            return normalized;
+        }
+        return 'neutral';
+    }
+
+    private sanitizeUrgency(input: string) {
+        const normalized = (input || '').toUpperCase();
+        if (normalized === 'CRITICAL' || normalized === 'HIGH' || normalized === 'MEDIUM' || normalized === 'LOW') {
+            return normalized;
+        }
+        return 'LOW';
+    }
+
+    private async resolveAiRole(userId?: string | null): Promise<AiRole> {
         if (!userId) return 'BUYER';
+
+        try {
+            const { rows } = await this.pool.query('SELECT role FROM users WHERE id = $1 LIMIT 1', [userId]);
+            const rawRole = rows[0]?.role as string | undefined;
+            return this.normalizeRole(rawRole);
+        } catch (error: any) {
+            this.logger.warn(`Failed to resolve AI role for user ${userId}: ${error?.message || 'unknown error'}`);
+            return 'BUYER';
+        }
+    }
+
+    private normalizeRole(rawRole?: string | null): AiRole {
+        const role = (rawRole || '').toUpperCase();
+        if (role === 'SELLER') return 'SELLER';
+        if (role === 'ADMIN' || role === 'SUPERADMIN' || role === 'AGENT' || role === 'OWNER') return 'ADMIN';
         return 'BUYER';
+    }
+
+    private isLlmEnabled() {
+        return this.llmApiKey.length > 0;
+    }
+
+    private toAgentMeta<T>(result: AgentResult<T>): AgentMeta {
+        return {
+            mode: result.mode,
+            provider: result.provider,
+            model: result.model,
+            llmEnabled: this.isLlmEnabled(),
+            fallbackReason: result.error,
+        };
+    }
+
+    private pickList(value: unknown, fallback: string[], maxItems: number) {
+        if (!Array.isArray(value)) return fallback.slice(0, maxItems);
+        const cleaned = value
+            .map((item) => (typeof item === 'string' ? item.trim() : ''))
+            .filter((item) => item.length > 0);
+
+        if (cleaned.length === 0) return fallback.slice(0, maxItems);
+        return [...new Set(cleaned)].slice(0, maxItems);
+    }
+
+    private async generateAgentJson<T>(input: {
+        feature: string;
+        systemPrompt: string;
+        userPayload: unknown;
+        maxTokens?: number;
+    }): Promise<AgentResult<T>> {
+        if (!this.isLlmEnabled()) {
+            return {
+                mode: 'fallback',
+                provider: 'internal',
+                model: 'deterministic',
+                data: null,
+                error: 'OPENAI_API_KEY is not configured',
+            };
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.llmTimeoutMs);
+
+        try {
+            const response = await fetch(this.llmResponsesUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${this.llmApiKey}`,
+                },
+                body: JSON.stringify({
+                    model: this.llmModel,
+                    input: [
+                        {
+                            role: 'system',
+                            content: `${input.systemPrompt}\nاعرض JSON فقط بدون أي نص إضافي.`,
+                        },
+                        {
+                            role: 'user',
+                            content: JSON.stringify(input.userPayload),
+                        },
+                    ],
+                    max_output_tokens: input.maxTokens || 900,
+                }),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                return {
+                    mode: 'fallback',
+                    provider: 'internal',
+                    model: this.llmModel,
+                    data: null,
+                    error: `LLM request failed (${response.status}): ${text.substring(0, 500)}`,
+                };
+            }
+
+            const payload = await response.json();
+            const rawText = this.extractResponseText(payload);
+            const parsed = this.parseJsonFromText<T>(rawText);
+
+            if (!parsed) {
+                return {
+                    mode: 'fallback',
+                    provider: 'internal',
+                    model: this.llmModel,
+                    data: null,
+                    error: 'LLM response is not valid JSON',
+                };
+            }
+
+            return {
+                mode: 'llm',
+                provider: 'openai',
+                model: this.llmModel,
+                data: parsed,
+            };
+        } catch (error: any) {
+            return {
+                mode: 'fallback',
+                provider: 'internal',
+                model: this.llmModel,
+                data: null,
+                error: error?.name === 'AbortError' ? 'LLM request timed out' : (error?.message || 'LLM request failed'),
+            };
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    private extractResponseText(payload: any): string {
+        if (typeof payload?.output_text === 'string' && payload.output_text.trim()) {
+            return payload.output_text;
+        }
+
+        if (Array.isArray(payload?.output)) {
+            const chunks: string[] = [];
+
+            for (const item of payload.output) {
+                if (!Array.isArray(item?.content)) continue;
+                for (const content of item.content) {
+                    if (typeof content?.text === 'string') {
+                        chunks.push(content.text);
+                    } else if (typeof content?.output_text === 'string') {
+                        chunks.push(content.output_text);
+                    }
+                }
+            }
+
+            if (chunks.length > 0) return chunks.join('\n');
+        }
+
+        if (typeof payload?.content === 'string') return payload.content;
+        return '';
+    }
+
+    private parseJsonFromText<T>(text: string): T | null {
+        const raw = text.trim();
+        if (!raw) return null;
+
+        try {
+            return JSON.parse(raw) as T;
+        } catch {
+            // continue with extraction strategies
+        }
+
+        const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenced?.[1]) {
+            try {
+                return JSON.parse(fenced[1].trim()) as T;
+            } catch {
+                // continue
+            }
+        }
+
+        const firstObjectStart = raw.indexOf('{');
+        const lastObjectEnd = raw.lastIndexOf('}');
+        if (firstObjectStart >= 0 && lastObjectEnd > firstObjectStart) {
+            const maybeObject = raw.slice(firstObjectStart, lastObjectEnd + 1);
+            try {
+                return JSON.parse(maybeObject) as T;
+            } catch {
+                // continue
+            }
+        }
+
+        const firstArrayStart = raw.indexOf('[');
+        const lastArrayEnd = raw.lastIndexOf(']');
+        if (firstArrayStart >= 0 && lastArrayEnd > firstArrayStart) {
+            const maybeArray = raw.slice(firstArrayStart, lastArrayEnd + 1);
+            try {
+                return JSON.parse(maybeArray) as T;
+            } catch {
+                // ignore
+            }
+        }
+
+        return null;
     }
 
     private async logAiRequest(input: {
@@ -451,3 +985,10 @@ export class AiService {
         });
     }
 }
+
+
+
+
+
+
+

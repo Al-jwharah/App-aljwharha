@@ -1,22 +1,35 @@
-# Aljwharah Assets — Brand Kit (مجلد الهوية)
+# Aljwharah Brand Kit (Professional)
 
-هذا المجلد يحتوي على:
-- الشعار (PNG)
-- أيقونات SVG (Outline 24px) + أيقونات تسجيل (Google/Apple)
-- Favicons
-- `tokens.json` (ألوان/خطوط/زوايا/أسلوب الأيقونات)
-- تعليمات الاستخدام
+This directory contains the approved visual identity assets for Aljwharah.
 
----
+## Directory Map
 
-## 1) الألوان (Tokens)
-الملف: `tokens.json`
+- `logo/`
+  - `aljwharah-assets_mark.png`
+  - `logo-info.txt`
+- `icons/`
+  - `brand.svg`
+  - `factory.svg`
+  - `outline/24/*.svg`
+  - `social/24/apple.svg`
+- `favicon/`
+  - `favicon-64.png`
+  - `favicon-128.png`
+  - `favicon-256.png`
 
-**Primary:** #0F3D2E  
-**Gold:** #C6A75E  
-**Charcoal:** #1C1C1C
+## Color System
 
-اقتراح CSS Variables:
+- Primary: `#0F3D2E`
+- Gold Accent: `#C6A75E`
+- Charcoal: `#1C1C1C`
+
+## Icon Standards
+
+- Size baseline: `24x24`
+- Stroke style: outline, consistent line weight
+- Coloring: `currentColor` (theme-controlled from CSS)
+
+## Recommended CSS Variables
 
 ```css
 :root {
@@ -31,76 +44,9 @@
 }
 ```
 
----
+## Usage Rules
 
-## 2) الشعار
-المجلد: `logo/`
-
-- `aljwharah-assets_primary_darkbg.png` : النسخة الأساسية
-- `aljwharah-assets_mark.png` : الرمز/العلامة (للـ favicon و Badge)
-
----
-
-## 3) الأيقونات (SVG)
-المجلد: `icons/outline/24/`
-
-كل الأيقونات:
-- **24x24**
-- **stroke-width=2**
-- تستخدم **currentColor** للتلوين عبر CSS
-
-### أيقونات زر الذكاء
-- `ai-sparkles.svg`
-- `ai-wand.svg`
-
-### أيقونات تسجيل/دخول
-- `login.svg`, `signup.svg`, `user.svg`
-- `mail.svg`, `phone.svg`, `lock.svg`, `otp.svg`
-
-### أيقونات السوق
-- `brand-tag.svg` (علامة)
-- `factory.svg` (مصنع)
-- `store.svg` (متجر)
-- `auction-gavel.svg` (مزاد)
-- `shield-check.svg` (موثق)
-- `escrow-lock.svg` (إسكرو)
-- `file-check.svg` (مستندات)
-- `handshake.svg` (صفقة)
-
-### أيقونات واجهة عامة
-- `search.svg`, `filter.svg`, `sort.svg`
-- `heart.svg`, `bell.svg`
-- `message.svg`, `compare.svg`
-- `chart.svg`
-
----
-
-## 4) أيقونات مزودي تسجيل الدخول
-المجلد: `icons/social/24/`
-- `google.svg`
-- `apple.svg`
-
----
-
-## 5) مثال استخدام في React
-> **ملاحظة:** مثال عام، حسب إعداد مشروعك (Vite/Next) قد تختلف طريقة استيراد SVG.
-
-```jsx
-import SparklesUrl from "./icons/outline/24/ai-sparkles.svg";
-
-export default function AiButton() {
-  return (
-    <button className="btn-primary">
-      <img src={SparklesUrl} alt="AI" style={{ width: 18, height: 18 }} />
-      زر الذكاء
-    </button>
-  );
-}
-```
-
----
-
-## 6) Favicons
-المجلد: `favicon/`
-- `favicon.ico`
-- `favicon-16.png`, `favicon-32.png`, ... إلخ
+- Keep logo aspect ratio fixed.
+- Use high-contrast placement for brand mark.
+- Do not re-color brand assets outside token palette.
+- Prefer SVG assets in product UI.

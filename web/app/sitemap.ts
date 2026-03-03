@@ -11,12 +11,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         { url: base, lastModified: new Date(), changeFrequency: 'daily', priority: 1 },
         { url: `${base}/listings`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.95 },
         { url: `${base}/auctions`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.95 },
+        { url: `${base}/trademarks`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.92 },
+        { url: `${base}/factories`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.9 },
+        { url: `${base}/stores`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.9 },
         { url: `${base}/pricing`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.85 },
+        { url: `${base}/ai`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.82 },
         { url: `${base}/support`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.8 },
         { url: `${base}/seller`, lastModified: new Date(), changeFrequency: 'daily', priority: 0.8 },
         { url: `${base}/billing`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.7 },
         { url: `${base}/about`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
         { url: `${base}/how-it-works`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
+        { url: `${base}/seller-guide`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.66 },
+        { url: `${base}/buyer-guide`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.66 },
+        { url: `${base}/delivery`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.62 },
         { url: `${base}/contact`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.6 },
         { url: `${base}/terms`, lastModified: new Date(), changeFrequency: 'yearly', priority: 0.4 },
         { url: `${base}/privacy`, lastModified: new Date(), changeFrequency: 'yearly', priority: 0.4 },
@@ -65,3 +72,4 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         return staticRoutes;
     }
 }
+

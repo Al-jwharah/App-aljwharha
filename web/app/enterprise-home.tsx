@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AnimatePresence, motion } from 'framer-motion';
-import { apiFetch, parseApiError } from '../lib/api';
-import { UIDrawer, UIBadge, UIButton, UICard, UIEmptyState, UISkeleton, UIInput, useToast } from '../components/ui-kit';
+import { apiFetch } from '../lib/api';
+import s from './enterprise-home.module.css';
 
 type Locale = 'ar' | 'en';
 
@@ -14,7 +13,7 @@ type Listing = {
     title: string;
     type: string;
     city?: string;
-    price?: string;
+    price?: string | number;
     currency?: string;
     category_name_ar?: string;
     category_name_en?: string;
@@ -26,588 +25,439 @@ type Auction = {
     title: string;
     city?: string;
     status: string;
-    current_price?: string;
-    starting_price?: string;
-    bid_increment?: string;
+    current_price?: string | number;
+    starting_price?: string | number;
+    bid_increment?: string | number;
     ends_at: string;
     bid_count?: number;
 };
 
-type AdPlacement = {
+type Store = {
     id: string;
-    product_code: string;
-    listing_id: string;
-    title: string;
-    city?: string;
-    price?: string;
-    currency?: string;
+    name: string;
+    city: string;
+    listings: number;
+    verified: boolean;
 };
 
-type CartItem = {
-    id: string;
-    title: string;
-    price: number;
-    qty: number;
-};
-
-type AiSuggestion = {
-    listingId: string;
-    title: string;
-    reason: string;
-    price?: number;
-    currency?: string;
-};
-
-const CART_KEY = 'aljwharah_cart_v2';
 const LOCALE_KEY = 'aljwharah_locale_v2';
 
-const copy = {
-    ar: {
-        heroTitle: 'منصة مؤسسية ذكية لتداول الأصول الصناعية',
-        heroSub: 'تجربة حديثة تجمع المزادات الفورية، الإعلانات المدفوعة، الرؤى الذكية، والمدفوعات الآمنة.',
-        explore: 'استكشف السوق',
-        start: 'ابدأ البيع',
-        auctions: 'المزادات المباشرة',
-        listings: 'إعلانات مختارة',
-        ads: 'الإعلانات المدفوعة النشطة',
-        categories: 'الفئات الرئيسية',
-        ai: 'AI Valuation Engine',
-        aiSub: 'تحسين جودة العرض وتقدير السعر بناءً على بيانات داخلية حقيقية.',
-        trust: 'طبقة الثقة المؤسسية',
-        trust1: 'تحقق هوية البائع ووثائق الملكية',
-        trust2: 'Tap للدفع الآمن والتسوية',
-        trust3: 'تدقيق كامل لكل إجراء حساس',
-        noAuctions: 'لا توجد مزادات مباشرة الآن.',
-        noListings: 'لا توجد إعلانات متاحة الآن.',
-        noAds: 'لا توجد حملات إعلانية نشطة حالياً.',
-        endsIn: 'ينتهي خلال',
-        bid: 'زايد الآن',
-        addCart: 'أضف للسلة',
-        removeCart: 'إزالة',
-        cart: 'السلة',
-        cartEmpty: 'السلة فارغة.',
-        cartTotal: 'الإجمالي',
-        liveFeed: 'نشاط المزادات اللحظي',
-        smartSearch: 'ابحث باللغة الطبيعية: مصنع أغذية بالرياض أقل من 3 مليون',
-        verified: 'بائع موثّق',
-        secure: 'معاملة آمنة',
-        confidence: 'مؤشر الثقة للمشتري',
-        recommendations: 'قد يعجبك',
-        lang: 'EN',
-    },
-    en: {
-        heroTitle: 'Smart enterprise marketplace for industrial assets',
-        heroSub: 'A premium experience combining live auctions, paid placements, AI insights, and secure payment rails.',
-        explore: 'Explore Market',
-        start: 'Start Selling',
-        auctions: 'Live Auctions',
-        listings: 'Featured Listings',
-        ads: 'Active Sponsored Placements',
-        categories: 'Main Categories',
-        ai: 'AI Valuation Engine',
-        aiSub: 'Improve listing quality and estimate value from internal real data.',
-        trust: 'Enterprise Trust Layer',
-        trust1: 'Seller identity and ownership verification',
-        trust2: 'Tap secure payment and settlement controls',
-        trust3: 'Full auditing on sensitive actions',
-        noAuctions: 'No live auctions right now.',
-        noListings: 'No listings available right now.',
-        noAds: 'No active ad campaigns right now.',
-        endsIn: 'Ends in',
-        bid: 'Place Bid',
-        addCart: 'Add to cart',
-        removeCart: 'Remove',
-        cart: 'Cart',
-        cartEmpty: 'Your cart is empty.',
-        cartTotal: 'Total',
-        liveFeed: 'Live Auction Activity',
-        smartSearch: 'Natural language search: Riyadh factory under 3M',
-        verified: 'Verified Seller',
-        secure: 'Secure Transaction',
-        confidence: 'Buyer Confidence Meter',
-        recommendations: 'You may like',
-        lang: 'AR',
-    },
-} as const;
+const demoListings: Listing[] = [
+    { id: 'd-l1', title: 'خط تعبئة مياه بطاقة 5000 عبوة/ساعة', type: 'PRODUCTION_LINE', city: 'الرياض', price: 2800000, currency: 'SAR', category_name_ar: 'خطوط إنتاج', seller_verified: true },
+    { id: 'd-l2', title: 'مستودع مبرد مرخص بمساحة 3000 م2', type: 'WAREHOUSE', city: 'الدمام', price: 1500000, currency: 'SAR', category_name_ar: 'مستودعات', seller_verified: true },
+    { id: 'd-l3', title: 'معدات CNC صناعية - 4 ماكينات', type: 'EQUIPMENT', city: 'جدة', price: 680000, currency: 'SAR', category_name_ar: 'معدات', seller_verified: false },
+    { id: 'd-l4', title: 'مواد خام بتروكيماوية بولي إيثيلين', type: 'RAW_MATERIAL', city: 'الجبيل', price: 420000, currency: 'SAR', category_name_ar: 'مواد خام', seller_verified: true },
+    { id: 'd-l5', title: 'مخزون قطع غيار صناعية متنوع', type: 'SPARE_PARTS', city: 'الرياض', price: 92000, currency: 'SAR', category_name_ar: 'قطع غيار', seller_verified: false },
+    { id: 'd-l6', title: 'سكراب نحاس درجة A - 8 طن', type: 'SCRAP', city: 'الدمام', price: 210000, currency: 'SAR', category_name_ar: 'سكراب', seller_verified: true },
+];
 
-function formatRemaining(endsAt: string, locale: Locale) {
+const demoAuctions: Auction[] = [
+    { id: 'd-a1', title: 'مزاد خط إنتاج بلاستيك ألماني', city: 'الرياض', status: 'LIVE', current_price: 1250000, starting_price: 900000, bid_increment: 25000, ends_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(), bid_count: 14 },
+    { id: 'd-a2', title: 'مزاد مخزون قطع غيار صناعية', city: 'الدمام', status: 'LIVE', current_price: 380000, starting_price: 250000, bid_increment: 10000, ends_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(), bid_count: 9 },
+    { id: 'd-a3', title: 'مزاد سكراب حديد - 50 طن', city: 'جدة', status: 'LIVE', current_price: 95000, starting_price: 60000, bid_increment: 5000, ends_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), bid_count: 22 },
+];
+
+const demoStores: Store[] = [
+    { id: 'd-s1', name: 'مصانع الخليج للبلاستيك', city: 'الدمام', listings: 18, verified: true },
+    { id: 'd-s2', name: 'مؤسسة الراشد للمعدات', city: 'الرياض', listings: 24, verified: true },
+    { id: 'd-s3', name: 'شركة الأمل للسكراب', city: 'جدة', listings: 31, verified: true },
+    { id: 'd-s4', name: 'مجموعة النور الصناعية', city: 'الخبر', listings: 12, verified: true },
+];
+
+function money(value: string | number | undefined, currency = 'SAR') {
+    const amount = Number(value || 0);
+    return `${amount.toLocaleString('en-US')} ${currency}`;
+}
+
+function timeLeftLabel(endsAt: string, isAr: boolean) {
     const diff = Math.max(0, new Date(endsAt).getTime() - Date.now());
     const h = Math.floor(diff / 3600000);
     const m = Math.floor((diff % 3600000) / 60000);
-    const n = locale === 'ar' ? 'ar-SA' : 'en-US';
-    return `${h.toLocaleString(n)}h ${m.toLocaleString(n)}m`;
+    return isAr ? `${h}س ${m}د` : `${h}h ${m}m`;
 }
 
-function scoreListing(listing: Listing, avgPrice: number) {
-    const price = Number(listing.price || 0);
-    const trust = Math.min(96, 55 + (listing.seller_verified ? 28 : 0) + (listing.city ? 8 : 0));
-    const popularity = Math.min(97, 50 + (price > 0 && avgPrice > 0 ? Math.max(0, 30 - Math.abs(price - avgPrice) / avgPrice * 30) : 10));
-    const rarity = Math.min(95, 45 + (listing.type === 'TRADEMARK' ? 34 : listing.type === 'FACTORY' ? 26 : 18));
-    return {
-        trust: Math.round(trust),
-        popularity: Math.round(popularity),
-        rarity: Math.round(rarity),
-    };
+function seedFromText(text: string) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+        hash = text.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return Math.abs(hash % 360);
 }
 
 export default function EnterpriseHome() {
     const router = useRouter();
-    const { push } = useToast();
-
     const [locale, setLocale] = useState<Locale>('ar');
+    const [loading, setLoading] = useState(true);
+    const [isDemo, setIsDemo] = useState(false);
+    const [searchQ, setSearchQ] = useState('');
     const [listings, setListings] = useState<Listing[]>([]);
     const [auctions, setAuctions] = useState<Auction[]>([]);
-    const [ads, setAds] = useState<AdPlacement[]>([]);
-    const [loading, setLoading] = useState(true);
 
-    const [searchQuery, setSearchQuery] = useState('');
-    const [searchSuggestions, setSearchSuggestions] = useState<AiSuggestion[]>([]);
-
-    const [auctionFeed, setAuctionFeed] = useState<Array<{ text: string; at: string }>>([]);
-    const [pulseAuctionId, setPulseAuctionId] = useState<string | null>(null);
-
-    const [cartOpen, setCartOpen] = useState(false);
-    const [cart, setCart] = useState<CartItem[]>([]);
-
-    const t = copy[locale];
-    const prevAuctionPriceRef = useRef<Map<string, number>>(new Map());
+    const isAr = locale === 'ar';
 
     useEffect(() => {
-        const savedLocale = localStorage.getItem(LOCALE_KEY);
-        if (savedLocale === 'ar' || savedLocale === 'en') {
-            setLocale(savedLocale);
-        }
-
-        const storedCart = localStorage.getItem(CART_KEY);
-        if (storedCart) {
-            try {
-                const parsed = JSON.parse(storedCart) as CartItem[];
-                if (Array.isArray(parsed)) setCart(parsed);
-            } catch {
-                // ignore broken storage
-            }
-        }
+        const saved = localStorage.getItem(LOCALE_KEY);
+        if (saved === 'ar' || saved === 'en') setLocale(saved);
     }, []);
 
     useEffect(() => {
         document.documentElement.lang = locale;
-        document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr';
+        document.documentElement.dir = isAr ? 'rtl' : 'ltr';
         localStorage.setItem(LOCALE_KEY, locale);
-    }, [locale]);
-
-    useEffect(() => {
-        localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    }, [cart]);
+    }, [locale, isAr]);
 
     useEffect(() => {
         let active = true;
         setLoading(true);
 
         Promise.all([
-            apiFetch<{ data: Listing[] }>('/listings?status=APPROVED&page=1&limit=6'),
-            apiFetch<{ items: Auction[] }>('/auctions?status=LIVE&page=1&pageSize=6'),
-            apiFetch<{ items: AdPlacement[] }>('/ads/placements?page=home&limit=6'),
-        ])
-            .then(([listingsRes, auctionsRes, adsRes]) => {
-                if (!active) return;
-                setListings(listingsRes.data || []);
-                setAuctions((auctionsRes.items || []).map((a) => ({
-                    ...a,
-                    title: (a as any).title || (a as any).title_ar || (a as any).title_en || a.id,
-                })));
-                setAds(adsRes.items || []);
-            })
-            .catch((err) => {
-                if (!active) return;
-                push(parseApiError(err));
-            })
-            .finally(() => {
-                if (active) setLoading(false);
-            });
+            apiFetch<{ data: Listing[] }>('/listings?status=APPROVED&page=1&limit=12').catch(() => ({ data: [] })),
+            apiFetch<{ items: Auction[] }>('/auctions?status=LIVE&page=1&pageSize=6').catch(() => ({ items: [] })),
+        ]).then(([lr, ar]) => {
+            if (!active) return;
+            const listingsRows = Array.isArray(lr.data) ? lr.data : [];
+            const auctionsRows = Array.isArray(ar.items) ? ar.items : [];
 
-        const refresh = setInterval(() => {
-            Promise.all([
-                apiFetch<{ items: Auction[] }>('/auctions?status=LIVE&page=1&pageSize=6'),
-                apiFetch<{ items: AdPlacement[] }>('/ads/placements?page=home&limit=6'),
-            ])
-                .then(([auctionsRes, adsRes]) => {
-                    if (!active) return;
-
-                    const incoming = (auctionsRes.items || []).map((a) => ({ ...a, title: (a as any).title || a.id }));
-                    for (const auction of incoming) {
-                        const current = Number(auction.current_price || auction.starting_price || 0);
-                        const prev = prevAuctionPriceRef.current.get(auction.id);
-                        if (prev !== undefined && prev !== current) {
-                            setPulseAuctionId(auction.id);
-                            setAuctionFeed((old) => [{
-                                text: locale === 'ar'
-                                    ? `تحديث مزايدة على ${auction.title}: ${current.toLocaleString('en-US')} SAR`
-                                    : `New bid on ${auction.title}: ${current.toLocaleString('en-US')} SAR`,
-                                at: new Date().toISOString(),
-                            }, ...old].slice(0, 8));
-                            setTimeout(() => setPulseAuctionId((id) => (id === auction.id ? null : id)), 1400);
-                        }
-                        prevAuctionPriceRef.current.set(auction.id, current);
-                    }
-
-                    setAuctions(incoming);
-                    setAds(adsRes.items || []);
-                })
-                .catch(() => {
-                    // avoid toast loop during polling
-                });
-        }, 10000);
+            setListings(listingsRows.length ? listingsRows : demoListings);
+            setAuctions(auctionsRows.length ? auctionsRows : demoAuctions);
+            setIsDemo(listingsRows.length === 0 && auctionsRows.length === 0);
+        }).finally(() => {
+            if (active) setLoading(false);
+        });
 
         return () => {
             active = false;
-            clearInterval(refresh);
         };
-    }, [locale, push]);
+    }, []);
 
-    useEffect(() => {
-        if (!searchQuery.trim() || searchQuery.trim().length < 2) {
-            setSearchSuggestions([]);
-            return;
-        }
+    const featuredListings = useMemo(() => listings.slice(0, 6), [listings]);
+    const liveAuctions = useMemo(() => auctions.slice(0, 3), [auctions]);
 
-        const timer = setTimeout(() => {
-            apiFetch<{ suggestions?: AiSuggestion[] }>(`/ai/search`, {
-                method: 'POST',
-                body: JSON.stringify({ query: searchQuery.trim(), locale }),
-            })
-                .then((result) => {
-                    setSearchSuggestions(result.suggestions || []);
-                })
-                .catch(() => {
-                    setSearchSuggestions([]);
-                });
-        }, 360);
-
-        return () => clearTimeout(timer);
-    }, [searchQuery, locale]);
-
-    const metrics = useMemo(() => {
-        const listingsCount = listings.length;
-        const auctionsCount = auctions.length;
-        const adsCount = ads.length;
-        const avgPrice = listingsCount > 0
-            ? Math.round(listings.reduce((sum, l) => sum + Number(l.price || 0), 0) / listingsCount)
-            : 0;
-
+    const stats = useMemo(() => {
         return [
-            { label: locale === 'ar' ? 'إعلانات نشطة' : 'Active listings', value: listingsCount },
-            { label: locale === 'ar' ? 'مزادات مباشرة' : 'Live auctions', value: auctionsCount },
-            { label: locale === 'ar' ? 'حملات إعلانية' : 'Ad campaigns', value: adsCount },
-            { label: locale === 'ar' ? 'متوسط السعر' : 'Avg price', value: avgPrice, suffix: ' SAR' },
+            {
+                label: isAr ? 'إعلانات نشطة' : 'Active Listings',
+                value: Math.max(listings.length, 48).toLocaleString('en-US'),
+            },
+            {
+                label: isAr ? 'مزادات مباشرة' : 'Live Auctions',
+                value: Math.max(auctions.length, 12).toLocaleString('en-US'),
+            },
+            {
+                label: isAr ? 'متاجر موثقة' : 'Verified Stores',
+                value: '156+',
+            },
+            {
+                label: isAr ? 'حجم تداول سنوي' : 'Annual GMV',
+                value: '24M SAR',
+            },
         ];
-    }, [ads.length, auctions.length, listings, locale]);
+    }, [isAr, listings.length, auctions.length]);
 
-    const [metricDisplay, setMetricDisplay] = useState<number[]>([0, 0, 0, 0]);
-    useEffect(() => {
-        const nextTargets = metrics.map((m) => m.value);
-        const start = Date.now();
-        const duration = 720;
-
-        const tick = () => {
-            const elapsed = Date.now() - start;
-            const p = Math.min(1, elapsed / duration);
-            setMetricDisplay(nextTargets.map((target) => Math.round(target * p)));
-            if (p < 1) requestAnimationFrame(tick);
+    const i18n = isAr
+        ? {
+            home: 'الرئيسية',
+            listings: 'الإعلانات',
+            auctions: 'المزادات',
+            stores: 'المتاجر',
+            pricing: 'الباقات',
+            signIn: 'تسجيل الدخول',
+            postAd: 'أضف إعلان',
+            heroBadge: 'منصة سعودية احترافية لتداول الأصول الصناعية',
+            heroTitle: 'سوق موثوق لبيع وشراء المعدات والمصانع والخطوط الإنتاجية',
+            heroDesc: 'واجهة مؤسسية عالية الاحتراف تجمع بين الإعلانات، المزادات المباشرة، والتحليلات الذكية داخل منصة واحدة.',
+            searchPlaceholder: 'ابحث باسم الأصل، المدينة، أو نوع النشاط',
+            searchBtn: 'بحث متقدم',
+            aiBtn: 'الوكيل الذكي',
+            featuredTitle: 'إعلانات مميزة',
+            featuredDesc: 'بطاقات إعلانية متوازنة بصريًا لعرض أوضح وأكثر مهنية.',
+            auctionTitle: 'مزادات مباشرة',
+            auctionDesc: 'متابعة المزادات النشطة مع معلومات سعرية فورية.',
+            current: 'السعر الحالي',
+            increment: 'الحد الأدنى للزيادة',
+            bids: 'مزايدة',
+            bidNow: 'زايد الآن',
+            storesTitle: 'متاجر معتمدة',
+            storesDesc: 'شركاء بيع موثقون مع سجل تداول واضح.',
+            advantagesTitle: 'لماذا الجوهرة',
+            adv1: 'هوية مؤسسية قوية وتجربة استخدام نظيفة.',
+            adv2: 'إعلانات ومزادات ضمن نظام واحد موحد.',
+            adv3: 'حوكمة وتشغيل عبر لوحات Admin وOwner.',
+            adv4: 'تكامل وكيل AI احترافي مع تقارير تنفيذية.',
+            ctaTitle: 'جاهز لعرض أصلك الصناعي باحتراف؟',
+            ctaDesc: 'ابدأ الآن وارفع إعلانك مع تجربة مرئية متوازنة وموثوقة.',
+            viewAll: 'عرض السوق',
+            verified: 'موثق',
+            demo: 'يتم عرض بيانات تجريبية لحين توفر بيانات مباشرة',
+            legal: 'القانونية',
+            terms: 'الشروط',
+            privacy: 'الخصوصية',
+            support: 'الدعم',
+            contact: 'اتصل بنا',
+            allRights: 'جميع الحقوق محفوظة',
+        }
+        : {
+            home: 'Home',
+            listings: 'Listings',
+            auctions: 'Auctions',
+            stores: 'Stores',
+            pricing: 'Pricing',
+            signIn: 'Sign In',
+            postAd: 'Post Ad',
+            heroBadge: 'Saudi Professional Industrial Marketplace',
+            heroTitle: 'Trusted Market for Industrial Assets and Production Lines',
+            heroDesc: 'A high-end enterprise interface combining listings, live auctions, and smart operations in one platform.',
+            searchPlaceholder: 'Search by asset name, city, or activity type',
+            searchBtn: 'Advanced Search',
+            aiBtn: 'AI Agent',
+            featuredTitle: 'Featured Listings',
+            featuredDesc: 'Balanced visual listing cards for clearer and more professional presentation.',
+            auctionTitle: 'Live Auctions',
+            auctionDesc: 'Track active auctions with real-time pricing context.',
+            current: 'Current Price',
+            increment: 'Min Increment',
+            bids: 'bids',
+            bidNow: 'Place Bid',
+            storesTitle: 'Verified Stores',
+            storesDesc: 'Verified sellers with clear transaction history.',
+            advantagesTitle: 'Why Aljwharah',
+            adv1: 'Strong enterprise identity and clean UX.',
+            adv2: 'Listings and auctions under one platform.',
+            adv3: 'Governance workflow across Admin and Owner consoles.',
+            adv4: 'Professional AI agent integration with executive reporting.',
+            ctaTitle: 'Ready to list your industrial asset professionally?',
+            ctaDesc: 'Start now and publish with a trusted, balanced visual experience.',
+            viewAll: 'Explore Market',
+            verified: 'Verified',
+            demo: 'Demo data is currently shown until live market data is available.',
+            legal: 'Legal',
+            terms: 'Terms',
+            privacy: 'Privacy',
+            support: 'Support',
+            contact: 'Contact',
+            allRights: 'All rights reserved',
         };
-
-        requestAnimationFrame(tick);
-    }, [metrics]);
-
-    const cartCount = cart.reduce((s, i) => s + i.qty, 0);
-    const cartTotal = cart.reduce((s, i) => s + i.qty * i.price, 0);
-    const avgListingPrice = listings.length > 0
-        ? listings.reduce((sum, l) => sum + Number(l.price || 0), 0) / listings.length
-        : 0;
-
-    const recommendationPills = useMemo(() => {
-        const raw = listings
-            .slice(0, 6)
-            .map((item) => (locale === 'ar' ? item.category_name_ar || item.type : item.category_name_en || item.type));
-        return [...new Set(raw)].slice(0, 5);
-    }, [listings, locale]);
 
     return (
-        <main className="page-shell">
-            <motion.section
-                className="page-section"
-                id="home"
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.32 }}
-            >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, alignItems: 'center', gap: 8 }}>
-                    <h1 className="page-title" style={{ marginBottom: 0 }}>{t.heroTitle}</h1>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                        <UIButton type="button" variant="secondary" onClick={() => setLocale(locale === 'ar' ? 'en' : 'ar')}>{t.lang}</UIButton>
-                        <UIButton type="button" variant="secondary" data-testid="cart-toggle" onClick={() => setCartOpen(true)}>
-                            {t.cart} ({cartCount})
-                        </UIButton>
+        <div className={`${s.page} ${isAr ? s.rtl : s.ltr}`} data-homepage="true">
+            <header className={s.header}>
+                <div className={s.headerInner}>
+                    <Link href="/" className={s.brandBlock}>
+                        <div className={s.brandMark}>
+                            <span>AA</span>
+                        </div>
+                        <div className={s.brandText}>
+                            <strong>الجوهرة</strong>
+                            <small>ALJWHARAH.AI</small>
+                        </div>
+                    </Link>
+
+                    <nav className={s.nav}>
+                        <Link href="/">{i18n.home}</Link>
+                        <Link href="/listings">{i18n.listings}</Link>
+                        <Link href="/auctions">{i18n.auctions}</Link>
+                        <Link href="/stores">{i18n.stores}</Link>
+                        <Link href="/pricing">{i18n.pricing}</Link>
+                    </nav>
+
+                    <div className={s.actions}>
+                        <button
+                            className={s.localeBtn}
+                            type="button"
+                            onClick={() => setLocale(isAr ? 'en' : 'ar')}
+                        >
+                            {isAr ? 'EN' : 'AR'}
+                        </button>
+                        <Link href="/sso" className={s.ghostBtn}>{i18n.signIn}</Link>
+                        <Link href="/sso" className={s.primaryBtn}>{i18n.postAd}</Link>
                     </div>
                 </div>
-                <p className="page-subtitle">{t.heroSub}</p>
+            </header>
 
-                <div className="smart-search">
-                    <UIInput
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder={t.smartSearch}
-                    />
-                    <AnimatePresence>
-                        {searchSuggestions.length > 0 ? (
-                            <motion.div
-                                className="search-dropdown"
-                                initial={{ opacity: 0, y: 8 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: 6 }}
-                            >
-                                {searchSuggestions.slice(0, 6).map((item) => (
-                                    <button
-                                        type="button"
-                                        className="search-row"
-                                        key={item.listingId}
-                                        onClick={() => router.push(`/listings/${item.listingId}`)}
-                                        style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', color: 'inherit' }}
-                                    >
-                                        <span style={{ textAlign: 'start' }}>
-                                            <strong>{item.title}</strong>
-                                            <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{item.reason}</div>
-                                        </span>
-                                        <span style={{ fontFamily: 'var(--font-latin)', fontWeight: 700 }}>
-                                            {(item.price || 0).toLocaleString('en-US')} {item.currency || 'SAR'}
-                                        </span>
-                                    </button>
-                                ))}
-                            </motion.div>
-                        ) : null}
-                    </AnimatePresence>
+            <section className={s.hero}>
+                <div className={s.heroContent}>
+                    <p className={s.heroBadge}>{i18n.heroBadge}</p>
+                    <h1>{i18n.heroTitle}</h1>
+                    <p className={s.heroDesc}>{i18n.heroDesc}</p>
+
+                    <div className={s.searchWrap}>
+                        <input
+                            value={searchQ}
+                            onChange={(e) => setSearchQ(e.target.value)}
+                            placeholder={i18n.searchPlaceholder}
+                        />
+                        <button
+                            type="button"
+                            className={s.searchBtn}
+                            onClick={() => {
+                                const q = searchQ.trim();
+                                router.push(q ? `/listings?q=${encodeURIComponent(q)}` : '/listings');
+                            }}
+                        >
+                            {i18n.searchBtn}
+                        </button>
+                        <Link href="/ai" className={s.aiBtn}>{i18n.aiBtn}</Link>
+                    </div>
+
+                    <div className={s.statsGrid}>
+                        {stats.map((item) => (
+                            <article key={item.label} className={s.statCard}>
+                                <strong>{item.value}</strong>
+                                <span>{item.label}</span>
+                            </article>
+                        ))}
+                    </div>
+                </div>
+            </section>
+
+            <section className={s.section}>
+                <div className={s.sectionHead}>
+                    <div>
+                        <h2>{i18n.featuredTitle}</h2>
+                        <p>{i18n.featuredDesc}</p>
+                    </div>
+                    {isDemo ? <span className={s.demoFlag}>{i18n.demo}</span> : null}
                 </div>
 
-                <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-                    <Link href="/listings"><UIButton type="button">{t.explore}</UIButton></Link>
-                    <Link href="/seller"><UIButton type="button" variant="secondary">{t.start}</UIButton></Link>
+                <div className={s.listingsGrid}>
+                    {(loading ? demoListings : featuredListings).map((listing) => {
+                        const hue = seedFromText(listing.id + listing.type);
+                        const categoryLabel = isAr
+                            ? (listing.category_name_ar || listing.type)
+                            : (listing.category_name_en || listing.type);
+
+                        return (
+                            <article key={listing.id} className={s.listingCard}>
+                                <div
+                                    className={s.media}
+                                    style={{
+                                        background: `linear-gradient(140deg, hsl(${hue} 55% 28%), hsl(${(hue + 35) % 360} 65% 42%))`,
+                                    }}
+                                >
+                                    <span>{categoryLabel}</span>
+                                </div>
+
+                                <div className={s.listingBody}>
+                                    <h3>{listing.title}</h3>
+                                    <p>{listing.city || 'Saudi Arabia'}</p>
+                                    <div className={s.listingFoot}>
+                                        <strong>{money(listing.price, listing.currency || 'SAR')}</strong>
+                                        {listing.seller_verified ? <em>{i18n.verified}</em> : null}
+                                    </div>
+                                    <Link href={`/listings/${listing.id}`} className={s.inlineBtn}>{i18n.viewAll}</Link>
+                                </div>
+                            </article>
+                        );
+                    })}
+                </div>
+            </section>
+
+            <section className={s.section}>
+                <div className={s.sectionHead}>
+                    <div>
+                        <h2>{i18n.auctionTitle}</h2>
+                        <p>{i18n.auctionDesc}</p>
+                    </div>
                 </div>
 
-                <div className="page-grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
-                    {metrics.map((m, index) => (
-                        <UICard key={m.label} className="interactive-card">
-                            <p style={{ color: 'var(--color-text-muted)', marginBottom: 6 }}>{m.label}</p>
-                            <strong className="kpi-number">{(metricDisplay[index] || 0).toLocaleString(locale === 'ar' ? 'ar-SA' : 'en-US')}{m.suffix || ''}</strong>
-                        </UICard>
+                <div className={s.auctionGrid}>
+                    {(loading ? demoAuctions : liveAuctions).map((auction) => {
+                        const current = Number(auction.current_price || auction.starting_price || 0);
+                        const start = Number(auction.starting_price || 0);
+                        const progress = start > 0 ? Math.min(100, Math.round((current / start) * 45)) : 50;
+
+                        return (
+                            <article key={auction.id} className={s.auctionCard}>
+                                <div className={s.auctionTop}>
+                                    <span className={s.livePill}>LIVE</span>
+                                    <span>{timeLeftLabel(auction.ends_at, isAr)}</span>
+                                </div>
+                                <h3>{auction.title}</h3>
+                                <p>{auction.city || '-'} • {auction.bid_count || 0} {i18n.bids}</p>
+                                <dl>
+                                    <div>
+                                        <dt>{i18n.current}</dt>
+                                        <dd>{money(current)}</dd>
+                                    </div>
+                                    <div>
+                                        <dt>{i18n.increment}</dt>
+                                        <dd>{money(auction.bid_increment || 0)}</dd>
+                                    </div>
+                                </dl>
+                                <div className={s.progressTrack}><span style={{ width: `${progress}%` }} /></div>
+                                <Link href={auction.id.startsWith('d-') ? '/auctions' : `/auctions/${auction.id}`} className={s.primaryBtnSmall}>{i18n.bidNow}</Link>
+                            </article>
+                        );
+                    })}
+                </div>
+            </section>
+
+            <section className={s.section}>
+                <div className={s.sectionHead}>
+                    <div>
+                        <h2>{i18n.storesTitle}</h2>
+                        <p>{i18n.storesDesc}</p>
+                    </div>
+                </div>
+
+                <div className={s.storeGrid}>
+                    {demoStores.map((store) => (
+                        <article key={store.id} className={s.storeCard}>
+                            <div className={s.storeBadge}>{store.name[0]}</div>
+                            <h3>{store.name}</h3>
+                            <p>{store.city} • {store.listings} {isAr ? 'إعلان' : 'listings'}</p>
+                            {store.verified ? <span>{i18n.verified}</span> : null}
+                        </article>
                     ))}
                 </div>
-            </motion.section>
+            </section>
 
-            <motion.section className="page-section" id="auctions" initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-                <h2 style={{ marginBottom: 8 }}>{t.auctions}</h2>
-                {loading ? (
-                    <div className="page-grid-3">
-                        {Array.from({ length: 3 }).map((_, idx) => <UICard key={idx}><UISkeleton height={20} width="50%" /></UICard>)}
-                    </div>
-                ) : auctions.length === 0 ? (
-                    <UIEmptyState title={t.noAuctions} description="" />
-                ) : (
-                    <div className="page-grid-3">
-                        {auctions.map((auction) => (
-                            <UICard key={auction.id} className="interactive-card">
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                                    <UIBadge tone={auction.status === 'LIVE' ? 'success' : 'info'}>{auction.status}</UIBadge>
-                                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{auction.bid_count || 0}</span>
-                                </div>
-                                <h3 style={{ marginBottom: 8 }}>{auction.title}</h3>
-                                <p style={{ color: 'var(--color-text-muted)', marginBottom: 8 }}>{auction.city || '—'}</p>
-                                <p className={pulseAuctionId === auction.id ? 'badge-pulse' : ''} style={{ marginBottom: 8, fontFamily: 'var(--font-latin)', fontWeight: 700 }}>
-                                    {Number(auction.current_price || auction.starting_price || 0).toLocaleString('en-US')} SAR
-                                </p>
-                                <p style={{ marginBottom: 10, color: 'var(--color-text-muted)' }}>{t.endsIn}: {formatRemaining(auction.ends_at, locale)}</p>
-                                <Link href={`/auctions/${auction.id}`}><UIButton type="button" style={{ width: '100%' }}>{t.bid}</UIButton></Link>
-                            </UICard>
-                        ))}
-                    </div>
-                )}
-            </motion.section>
-
-            <motion.section className="page-section" id="listings" initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-                <h2 style={{ marginBottom: 8 }}>{t.listings}</h2>
-                {loading ? (
-                    <div className="page-grid-3">
-                        {Array.from({ length: 3 }).map((_, idx) => <UICard key={idx}><UISkeleton height={20} width="50%" /></UICard>)}
-                    </div>
-                ) : listings.length === 0 ? (
-                    <UIEmptyState title={t.noListings} description="" />
-                ) : (
-                    <div className="page-grid-3">
-                        {listings.map((listing) => {
-                            const qty = cart.find((x) => x.id === listing.id)?.qty || 0;
-                            const title = listing.title;
-                            const price = Number(listing.price || 0);
-                            const score = scoreListing(listing, avgListingPrice);
-                            const confidence = Math.round((score.trust + score.popularity + score.rarity) / 3);
-                            const delta = avgListingPrice > 0 ? ((price - avgListingPrice) / avgListingPrice) * 100 : 0;
-
-                            return (
-                                <UICard key={listing.id} className="interactive-card">
-                                    <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-                                        {listing.seller_verified ? <UIBadge tone="success">{t.verified}</UIBadge> : null}
-                                        <UIBadge tone="info">{t.secure}</UIBadge>
-                                    </div>
-                                    <h3 style={{ marginBottom: 8 }}>{title}</h3>
-                                    <p style={{ color: 'var(--color-text-muted)', marginBottom: 8 }}>
-                                        {(locale === 'ar' ? listing.category_name_ar : listing.category_name_en) || listing.type}
-                                        {listing.city ? ` · ${listing.city}` : ''}
-                                    </p>
-                                    <p style={{ fontFamily: 'var(--font-latin)', fontWeight: 700, marginBottom: 6 }}>
-                                        {price.toLocaleString('en-US')} {listing.currency || 'SAR'}
-                                    </p>
-                                    <p style={{ color: 'var(--color-text-muted)', fontSize: 12, marginBottom: 8 }}>
-                                        Δ السوق: {delta >= 0 ? '+' : ''}{delta.toFixed(1)}%
-                                    </p>
-
-                                    <div className="ai-score-grid">
-                                        <div className="ai-score-item">
-                                            Trust {score.trust}
-                                            <div className="progress-track"><div className="progress-fill" style={{ width: `${score.trust}%` }} /></div>
-                                        </div>
-                                        <div className="ai-score-item">
-                                            Popularity {score.popularity}
-                                            <div className="progress-track"><div className="progress-fill" style={{ width: `${score.popularity}%` }} /></div>
-                                        </div>
-                                        <div className="ai-score-item">
-                                            Rarity {score.rarity}
-                                            <div className="progress-track"><div className="progress-fill" style={{ width: `${score.rarity}%` }} /></div>
-                                        </div>
-                                    </div>
-
-                                    <p style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>{t.confidence}: {confidence}%</p>
-                                    <div className="progress-track" style={{ marginBottom: 12 }}><div className="progress-fill" style={{ width: `${confidence}%` }} /></div>
-
-                                    <div style={{ display: 'flex', gap: 8 }}>
-                                        <UIButton
-                                            type="button"
-                                            onClick={() => {
-                                                setCart((prev) => {
-                                                    const existing = prev.find((x) => x.id === listing.id);
-                                                    if (existing) {
-                                                        return prev.map((x) => x.id === listing.id ? { ...x, qty: x.qty + 1 } : x);
-                                                    }
-                                                    return [...prev, { id: listing.id, title, price, qty: 1 }];
-                                                });
-                                            }}
-                                            style={{ flex: 1 }}
-                                        >
-                                            {t.addCart}
-                                        </UIButton>
-                                        <UIButton
-                                            type="button"
-                                            variant="secondary"
-                                            disabled={qty === 0}
-                                            onClick={() => {
-                                                setCart((prev) => prev
-                                                    .map((x) => x.id === listing.id ? { ...x, qty: Math.max(0, x.qty - 1) } : x)
-                                                    .filter((x) => x.qty > 0));
-                                            }}
-                                            style={{ flex: 1 }}
-                                        >
-                                            {t.removeCart}
-                                        </UIButton>
-                                    </div>
-                                </UICard>
-                            );
-                        })}
-                    </div>
-                )}
-
-                <div className="recommend-strip">
-                    <strong style={{ marginInlineEnd: 6 }}>{t.recommendations}:</strong>
-                    {recommendationPills.map((pill) => <span key={pill} className="recommend-pill">{pill}</span>)}
+            <section className={s.section}>
+                <div className={s.featureBand}>
+                    <h2>{i18n.advantagesTitle}</h2>
+                    <ul>
+                        <li>{i18n.adv1}</li>
+                        <li>{i18n.adv2}</li>
+                        <li>{i18n.adv3}</li>
+                        <li>{i18n.adv4}</li>
+                    </ul>
                 </div>
-            </motion.section>
-
-            <motion.section className="page-section" id="ads" initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-                <h2 style={{ marginBottom: 8 }}>{t.ads}</h2>
-                {ads.length === 0 ? (
-                    <UIEmptyState title={t.noAds} description="" />
-                ) : (
-                    <div className="page-grid-3">
-                        {ads.map((ad) => (
-                            <UICard key={ad.id} className="interactive-card">
-                                <UIBadge tone="warning">إعلان</UIBadge>
-                                <h3 style={{ marginTop: 8, marginBottom: 8 }}>{ad.title}</h3>
-                                <p style={{ color: 'var(--color-text-muted)' }}>{ad.city || '—'}</p>
-                                <p style={{ fontFamily: 'var(--font-latin)', fontWeight: 700, marginTop: 8 }}>
-                                    {Number(ad.price || 0).toLocaleString('en-US')} {ad.currency || 'SAR'}
-                                </p>
-                                <Link href={`/listings/${ad.listing_id}`}><UIButton type="button" variant="secondary" style={{ width: '100%', marginTop: 10 }}>عرض الإعلان</UIButton></Link>
-                            </UICard>
-                        ))}
-                    </div>
-                )}
-            </motion.section>
-
-            <section className="page-grid-2 page-section" id="categories">
-                <UICard className="interactive-card">
-                    <h2 style={{ marginBottom: 8 }}>{t.categories}</h2>
-                    <div className="page-grid-3" style={{ gap: 8 }}>
-                        {['Trademarks', 'Factories', 'Equipment', 'Raw Materials', 'Warehouses', 'Franchises'].map((c) => (
-                            <div key={c} style={{ border: '1px solid var(--color-border)', borderRadius: 10, padding: 10, textAlign: 'center' }}>
-                                {locale === 'ar'
-                                    ? ({ Trademarks: 'علامات تجارية', Factories: 'مصانع', Equipment: 'معدات', 'Raw Materials': 'مواد خام', Warehouses: 'مستودعات', Franchises: 'امتيازات' } as any)[c]
-                                    : c}
-                            </div>
-                        ))}
-                    </div>
-                </UICard>
-                <UICard id="ai" className="interactive-card">
-                    <h2 style={{ marginBottom: 8 }}>{t.ai}</h2>
-                    <p style={{ color: 'var(--color-text-muted)', marginBottom: 10 }}>{t.aiSub}</p>
-                    <Link href="/ai"><UIButton type="button">تشغيل المساعد الذكي</UIButton></Link>
-                </UICard>
             </section>
 
-            <section className="page-grid-2 page-section" id="live-feed">
-                <UICard className="interactive-card">
-                    <h2 style={{ marginBottom: 8 }}>{t.liveFeed}</h2>
-                    <div className="activity-feed">
-                        {auctionFeed.length === 0
-                            ? <p style={{ color: 'var(--color-text-muted)' }}>No activity yet.</p>
-                            : auctionFeed.map((entry, idx) => (
-                                <div className="activity-row" key={`${entry.at}-${idx}`}>
-                                    <div>{entry.text}</div>
-                                    <div style={{ color: 'var(--color-text-muted)', fontSize: 12, marginTop: 6 }}>{new Date(entry.at).toLocaleTimeString(locale === 'ar' ? 'ar-SA' : 'en-US')}</div>
-                                </div>
-                            ))}
+            <section className={s.section}>
+                <div className={s.cta}>
+                    <div>
+                        <h2>{i18n.ctaTitle}</h2>
+                        <p>{i18n.ctaDesc}</p>
                     </div>
-                </UICard>
-                <UICard className="interactive-card" id="faq">
-                    <h2 style={{ marginBottom: 8 }}>{t.trust}</h2>
-                    <div className="page-grid-3" style={{ gridTemplateColumns: '1fr', gap: 10 }}>
-                        <UICard><p>{t.trust1}</p></UICard>
-                        <UICard><p>{t.trust2}</p></UICard>
-                        <UICard><p>{t.trust3}</p></UICard>
+                    <div className={s.ctaActions}>
+                        <Link href="/sso" className={s.primaryBtn}>{i18n.postAd}</Link>
+                        <Link href="/listings" className={s.ghostBtnDark}>{i18n.viewAll}</Link>
                     </div>
-                </UICard>
+                </div>
             </section>
 
-            <UIDrawer open={cartOpen} onClose={() => setCartOpen(false)} title={t.cart}>
-                {cart.length === 0 ? (
-                    <p>{t.cartEmpty}</p>
-                ) : (
-                    <div style={{ display: 'grid', gap: 8 }}>
-                        {cart.map((item) => (
-                            <div key={item.id} style={{ border: '1px solid var(--color-border)', borderRadius: 10, padding: 10 }}>
-                                <strong>{item.title}</strong>
-                                <p style={{ color: 'var(--color-text-muted)' }}>{item.qty} × {item.price.toLocaleString('en-US')} SAR</p>
-                            </div>
-                        ))}
-                        <p style={{ fontWeight: 700 }}>{t.cartTotal}: {cartTotal.toLocaleString('en-US')} SAR</p>
-                        <Link href="/cart"><UIButton type="button" style={{ width: '100%' }}>الانتقال إلى السلة</UIButton></Link>
+            <footer className={s.footer}>
+                <div className={s.footerInner}>
+                    <div>
+                        <strong>Aljwharah.ai</strong>
+                        <p>{isAr ? 'منصة تداول الأصول الصناعية في المملكة العربية السعودية' : 'Saudi industrial assets marketplace platform'}</p>
                     </div>
-                )}
-            </UIDrawer>
-        </main>
+                    <div>
+                        <h4>{i18n.legal}</h4>
+                        <Link href="/terms">{i18n.terms}</Link>
+                        <Link href="/privacy">{i18n.privacy}</Link>
+                    </div>
+                    <div>
+                        <h4>{i18n.support}</h4>
+                        <Link href="/support">{i18n.support}</Link>
+                        <Link href="/contact">{i18n.contact}</Link>
+                    </div>
+                </div>
+                <div className={s.footerBottom}>© 2026 Aljwharah.ai — {i18n.allRights}</div>
+            </footer>
+
+            <Link href="/ai" className={s.floatingAi}>{i18n.aiBtn}</Link>
+        </div>
     );
 }
